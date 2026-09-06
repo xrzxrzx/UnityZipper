@@ -1,0 +1,6 @@
+# Unity Zipper 框架仓库：白名单模式——只跟踪 Assets/Zipper 与 docs
+/*
+!/Assets/
+/Assets/*
+!/Assets/Zipper/
+!/docs/
