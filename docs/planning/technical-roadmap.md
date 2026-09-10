@@ -1,9 +1,9 @@
-# Zipper Unity 框架 — 技术路线规划（v0.5 待审批）
+# Zipper Unity 框架 — 技术路线规划（v0.6 待审批）
 
-> 状态：**v0.5 草稿，待审批**
+> 状态：**v0.6 草稿，待审批**
 > 定位：本文件是框架开发的总体技术路线，回答「做什么、怎么做、按什么顺序做」；**不含代码实现**。
 > 依据：协调者规范（先文档、后编码；无批准、不实施）；`docs/standards/agent-role.md`（AI 只做设计，代码由使用者实现）。
-> 变更记录：v0.2 融入调研结论；v0.3 定为 **.unitypackage 右键导出、拆箱即用**（放弃 UPM 包形态）；**v0.4（2026-09-06）** 同步近期现实与决策——现状盘点更新、资源管理器键体系改为 address/label、Core 定为"零框架依赖"例外、新增事件总线决策、新增 Core 基础设施一节、里程碑状态刷新；**v0.5** 事件总线改**双实现**（自研 + R3 封装，R3 只负责 UI 通知）；**分发相关（UPM 依赖与"随包自包含"的冲突）按使用者决定暂缓，待其另行决策**。
+> 变更记录：v0.2 融入调研结论；v0.3 定为 **.unitypackage 右键导出、拆箱即用**（放弃 UPM 包形态）；**v0.4（2026-09-06）** 同步近期现实与决策——现状盘点更新、资源管理器键体系改为 address/label、Core 定为"零框架依赖"例外、新增事件总线决策、新增 Core 基础设施一节、里程碑状态刷新；**v0.5** 事件总线改**双实现**（自研 + R3 封装，R3 只负责 UI 通知）；**v0.6** 事件总线命名统一框架约定（`IZEventBus` / `ZEventBus` / `ZR3EventBus`，见命名规范）；**分发相关（UPM 依赖与"随包自包含"的冲突）按使用者决定暂缓，待其另行决策**。
 
 ---
 
@@ -43,7 +43,7 @@
 | 依赖注入 | VContainer | 模块经容器装配 |
 | 异步 | UniTask（对外接口统一） | 已切 UPM |
 | 对象池（普通） | 自研 `ZObjectPool<T>` 演进 | 已有骨架 |
-| **事件总线** | **双实现**：`IEventBus` 接口（Core）+ 自研实现（Core）+ **R3 封装实现**（依赖 R3 的程序集，不进 Core）；可切换或按 key 并存 | v0.5 定案：**UI 相关通知走 R3 版、非 UI 跨模块通知走自研版**；同一事件只归属一条总线 |
+| **事件总线** | **双实现**：`IZEventBus` 接口（Core）+ `ZEventBus`（自研，Core）+ **`ZR3EventBus`**（封装 R3，依赖 R3 的程序集，不进 Core）；可切换或按 key 并存 | v0.5 定案（v0.6 统一命名）：**UI 相关通知走 R3 版、非 UI 跨模块通知走自研版**；同一事件只归属一条总线 |
 | 命名空间 | `Zipper.*` | 与现状一致 |
 
 **版本基线**：UniTask 2.5.11（UPM git）、Addressables 1.22.3、VContainer 1.19.0；DOTS 相关（Entities 1.0.16 等）待 M4 以 Package Manager 实际解析为准。
@@ -144,7 +144,7 @@ Assets/Zipper/
 ### 5.6 基础设施（Zipper.Core）— v0.4 新增
 
 - **日志系统**：分级（Trace…Fatal）、模块 tag、编译期剥离（Release 剥离 Info 及以下）、运行时级别控制、Console + 文件双输出、线程安全。
-- **事件总线（双实现）**：`IEventBus` 接口 + 自研实现 + R3 封装实现；**R3 在本框架只负责 UI 方面的事件通知**，非 UI 的跨模块通知用自研实现；同一事件类型只归属一条总线，禁止双发；两实现对外行为一致（同一套测试覆盖）。边界纪律：只用于"跨模块低频通知"，不用于请求-响应、状态查询、高频数据流（后者走 R3 流或直接引用）。
+- **事件总线（双实现）**：`IZEventBus` 接口 + `ZEventBus`（自研）+ `ZR3EventBus`（封装 R3）；**R3 在本框架只负责 UI 方面的事件通知**，非 UI 的跨模块通知用自研实现；同一事件类型只归属一条总线，禁止双发；两实现对外行为一致（同一套测试覆盖）。边界纪律：只用于"跨模块低频通知"，不用于请求-响应、状态查询、高频数据流（后者走 R3 流或直接引用）。
 - 其它：`ZAssert` 断言、按需扩展方法、版本常量。
 - 设计稿：`docs/architecture/core-design.md`（v0.4）。
 
@@ -196,9 +196,9 @@ Assets/Zipper/
 
 - 调研报告：`docs/research/unity-framework-tech-facts.md`（其中的 UPM 包形态方案**已被 v0.3 的右键导出取代**）
 - 模块设计稿：`docs/architecture/resource-manager-design.md`、`docs/architecture/core-design.md`
-- 规范：`docs/standards/git-workflow.md`、`docs/standards/agent-role.md`
+- 规范：`docs/standards/git-workflow.md`、`docs/standards/agent-role.md`、`docs/standards/naming-convention.md`（Z/IZ 前缀约定）
 - 进度记忆：`docs/memory/progress-2026-09-05-06.md`
 
 ## 审批记录
 
-- [ ] 使用者批准 v0.5（日期：____，意见：____）
+- [ ] 使用者批准 v0.6（日期：____，意见：____）
