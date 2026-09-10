@@ -1,9 +1,10 @@
 # Zipper.Core 设计 — 基础设施与日志系统
 
-> 状态：**v0.1 草稿，待审阅**（供 M1 实施引用）
+> 状态：**v0.2 草稿，待审阅**
 > 定位：`docs/planning/technical-roadmap.md` §4.2 中 `Zipper.Core`（基础设施：日志、事件、扩展、公共工具）的展开设计稿。**含伪代码，不含可编译实现**。
+> **实施归属（v0.2 明确）**：本文件是**设计文档**——AI 只负责架构设计与少量伪代码（供设计参考，**非实现交付物**）；**代码实现由使用者完成**。依据：`docs/standards/agent-role.md`。
 > 已定范围（用户决策 2026-09-06）：日志 Sink = **Console + 文件输出**；Release **剥离 Info 及以下**；**支持运行时动态改级别**。
-> 关联：`docs/architecture/resource-manager-design.md`（资源管理器，v0.2）、`docs/standards/git-workflow.md`
+> 关联：`docs/architecture/resource-manager-design.md`（资源管理器，v0.2）、`docs/standards/git-workflow.md`、`docs/standards/agent-role.md`
 
 ---
 
@@ -158,7 +159,9 @@ namespace Zipper.Core.Logging
 }
 ```
 
-### 3.5 核心伪代码
+### 3.5 核心伪代码（设计级，供参考、非实现交付）
+
+> 以下伪代码用于表达设计意图（接口形态、调用链、线程与剥离语义），**不追求可直接编译**；正式实现由使用者编写，命名与拆分可自行取舍。
 
 #### F1 门面与分级判定（编译期剥离 + 前置判定）
 
@@ -419,11 +422,87 @@ roadmap 已定 UI 绑定层用 **R3**；事件总线是否自研待 R3 vendor �
 
 ---
 
-## 5. 与现有代码的衔接
+## 5. 工程接入要素（v0.2 新增）
 
-- `ZResourceManager.cs` 两处 TODO 与一处 `Debug.LogWarning` → 待日志系统落地后统一替换为 `ZLog.Warn(..., context)`（属于代码改动，实施前单独批）。
-- 各模块（Pool/Resources/Audio/UI）取自己的 `ZLogModule` tag，Console 前缀即模块名。
-- 框架装配：`Zipper.Runtime`（未来）调用 `ZLogBootstrap.Initialize`；当前 `GameLifetimeScope` 可先手工调用。
+### 5.1 目录与文件布局（建议）
+
+```
+Assets/Zipper/Core/
+├── Zipper.Core.asmdef
+├── Logging/
+│   ├── ZLog.cs                       静态门面（可编译期剥离）
+│   ├── ZLogLevel.cs / ZLogModule.cs / ZLogEntry.cs
+│   ├── IZLogger.cs / ZLogger.cs      模块化日志器（可注入、可 mock）
+│   ├── ZLogRouter.cs                 分级 / 模块过滤 / 分发
+│   ├── IZLogSink.cs
+│   ├── Sinks/ConsoleSink.cs
+│   ├── Sinks/FileSink.cs
+│   ├── ZLogOptions.cs / ZLogBootstrap.cs
+│   └── Internal/MainThreadPump.cs
+│       Internal/MainThreadPumpDriver.cs（Core 内唯一 MonoBehaviour）
+├── Assert/ZAssert.cs
+├── Extensions/（按需增补）
+└── Utils/ZipperVersion.cs
+```
+
+- 命名空间：`Zipper.Core`，Logging 子目录用 `Zipper.Core.Logging`；**目录与命名空间保持一致**（与工程既有约定一致）。
+
+### 5.2 asmdef 配置要点
+
+| 项 | 取值 | 说明 |
+|---|---|---|
+| name | `Zipper.Core` | 已存在（当前仅 `{"name": "Zipper.Core"}`） |
+| references | **空** | 只依赖引擎；不引 UniTask / VContainer / Addressables（§1 依赖原则） |
+| autoReferenced | true（默认） | 让 Assembly-CSharp（业务/DI 层）可直接使用 |
+| includePlatforms | 全平台 | 编辑器专用代码（如日志 Viewer）不放这里，将来放 `Zipper.Editor` |
+| allowUnsafeCode | false | 无需 |
+
+> 若将来确实要引 UniTask（如异步 flush），再补 references，同时更新 §1 的 roadmap 偏差记录。
+
+### 5.3 初始化与关闭时序
+
+```
+游戏启动
+ └─ GameLifetimeScope.Awake（或将来的 Zipper.Runtime 引导组件）
+      ├─ 1) ZLogBootstrap.Initialize(ZLogOptions)     ← 越早越好，先于任何业务日志
+      │       ├─ MainThreadPump.Install()（记录主线程 ID + 创建驱动对象 DontDestroyOnLoad）
+      │       ├─ 装配 Router 与 Sink（ConsoleSink 必装；FileSink 按配置）
+      │       └─ ZLog.Attach(router)（门面接入）
+      ├─ 2) Application.quitting += Shutdown            ← 退出前 Flush，防丢尾日志
+      └─ 3) Configure(IContainerBuilder)：
+              builder.RegisterInstance<IZLogger>(ZLog.For(ZLogModule.Core));   // 可选
+
+Scope 关闭 / 应用退出
+ └─ ZLogBootstrap.Shutdown() → Flush 全部 Sink → 停止后台线程（Join 带超时）→ 移除驱动对象
+```
+
+要点：
+- **初始化必须早于任何业务日志**：推荐放在 Scope 的 `Awake`/引导入口，早于 `Configure` 内的注册。
+- **驱动对象**：`MainThreadPumpDriver` 运行时 `Instantiate` + `DontDestroyOnLoad`，不入场景；编辑器下依赖 domain reload 自动重建（可用 `[RuntimeInitializeOnLoadMethod]` 兜底）。
+- **未初始化时的降级**：门面持有默认 Router（仅 Console、Info 级），保证任何时刻调用日志都不报错。
+- **退出不卡死**：后台线程 Join 设超时（如 1s），超时即放弃剩余缓冲。
+
+### 5.4 与 GameLifetimeScope 的接入关系
+
+```
+GameLifetimeScope（Assembly-CSharp，现状）
+ ├─ Awake
+ │    └─ ZLogBootstrap.Initialize(...)                 ← v1 阶段手工调用
+ ├─ Configure
+ │    ├─ builder.RegisterInstance<IZLogger>(ZLog.For(ZLogModule.Core));
+ │    ├─ builder.Register<IZResourceManager, ZResourceManager>(Lifetime.Singleton);
+ │    └─ builder.RegisterEntryPoint<ResourcesBootstrapper>(Lifetime.Singleton);
+ └─ 将来：改由 Zipper.Runtime 的引导组件统一装配（业务工程零改动）
+```
+
+- **模块取 tag**：各模块用 `ZLog.For(ZLogModule.Resources)` 或门面 `ZLog.Warn(msg, context)`；**框架内部普通调用建议用门面**（可编译期剥离），**需要 mock 的单测用注入的 `IZLogger`**。
+- **第一个真实用例**：`ResourcesBootstrapper.InitializeAsync` 前后打点，记录 Addressables 初始化耗时（验证日志系统同时给资源管理器提供可观测性）。
+
+### 5.5 裁剪与共存
+
+- Core 无框架依赖 → 任何层次都可引用；某模块不用日志时无需改动（无强制引用）。
+- 与 Unity 自带 `Debug.Log` 共存：框架代码统一走 `ZLog`，第三方/Demo 代码可直接用 `Debug.Log`。
+- 现有调用点衔接：`ZResourceManager` 的 `Debug.LogWarning` 与两处 TODO，**由使用者实现日志系统时**自行替换（AI 不代改代码）。
 
 ---
 
@@ -436,7 +515,9 @@ roadmap 已定 UI 绑定层用 **R3**；事件总线是否自研待 R3 vendor �
 | 日志格式 | 是否需要 JSON 结构化行（便于脚本分析） | 默认纯文本，需要时加 Sink 变体 |
 | R3 事件 | 事件总线是否自研 | 等 R3 vendor 后评估 |
 | roadmap 偏差 | Core 不引 VContainer/UniTask 与 roadmap §4.2 冲突 | 记入 roadmap 修订项 |
-| 现有调用点替换 | Resources 的 Debug.LogWarning/TODO | 日志系统落地后统一替换 |
+| 现有调用点替换 | Resources 的 Debug.LogWarning/TODO | 由使用者实现日志系统时统一替换 |
+| MainThreadPump 驱动方式 | MonoBehaviour 驱动 vs 自定义 PlayerLoop 注入 vs 引 UniTask | v1 选 MonoBehaviour（Core 零依赖）；若日后引入 UniTask 可改为 PlayerLoop |
+| 编译期剥离符号 | 用单一 `ZIPPER_LOG_VERBOSE` 还是按级别多符号 | v1 单符号（Editor/Development 定义）；需要更细粒度再拆 |
 
 ---
 
@@ -444,6 +525,7 @@ roadmap 已定 UI 绑定层用 **R3**；事件总线是否自研待 R3 vendor �
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.2 | 2026-09-06 | ① 对齐协作设定：明确实施归属（AI 只做设计+伪代码，代码由使用者实现）、§3.5 伪代码加定位说明；② 新增 §5「工程接入要素」（目录布局 / asmdef / 初始化与关闭时序 / 与 GameLifetimeScope 接入 / 裁剪共存）；③ §6 补两条待办 |
 | v0.1 | 2026-09-06 | 初稿：Core 定位与依赖原则 + 日志系统（双 Sink/剥离/运行时级别/线程安全/伪代码）+ Assert/Extensions 简述 + 验收 |
 
-> 审批：本文件为设计草稿，不产生代码变更；据其进入编码前需按协调者规范另行审批。
+> 审批：本文件为设计草稿，不含代码实现；由使用者据其自行实现，AI 不代写代码（见 `docs/standards/agent-role.md`）。
