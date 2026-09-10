@@ -266,7 +266,7 @@ IZEventBus（接口，定义在 Zipper.Core —— 零依赖，任何层都能�
    └─ ZR3EventBus（封装 R3 的实现，放在依赖 R3 的程序集：Zipper.UI 或独立的 Zipper.Events.R3）
 ```
 
-> **命名约定**：品牌名 Zipper 取首字母 **Z** —— 框架自有类型用 `Z*` 前缀（`ZLog`、`ZEventBus`、`ZResourceManager`、`ZObjectPool`），接口用 `IZ*`（`IZLogger`、`IZEventBus`、`IZResourceManager`）。详见 `docs/standards/naming-convention.md`。
+> **命名约定**：品牌名 Zipper 取首字母 **Z** —— 框架对外的概念与入口用 `Z*` 前缀（`ZLog`、`ZEventBus`、`ZResourceManager`、`ZObjectPool`），接口用 `IZ*`（`IZLogger`、`IZEventBus`、`IZResourceManager`）；**内部机制类型不加前缀**（如句柄 `AssetHandle`/`PrefabAsset`）。详见 `docs/standards/naming-convention.md`。
 
 - **接口在 Core、R3 实现不在 Core**：Core 保持"零框架依赖"，若把 R3 实现塞进 Core，就等于 Core 被迫引 R3，地基原则破功。
 - **选择方式**：由组装层（Zipper.Runtime / GameLifetimeScope）决定注册哪个实现；两个都要用时用容器的**带 key 注册**区分（具体 API 以实现时的容器版本为准），使用方按 key 取用。
