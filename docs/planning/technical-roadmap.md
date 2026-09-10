@@ -23,7 +23,7 @@
 | UI | uGUI 1.0.0 + TextMeshPro 3.0.7 | UI 方案定为 uGUI |
 | DI | VContainer 1.19.0（UPM 包，位于 Packages/） | 容器装配可用；是否 vendor 随分发决策（暂缓） |
 | 异步 | **UniTask 2.5.11（UPM git 源）** | 已由 vendor 源码版切换；UPM 包内自带 Addressables 扩展程序集 |
-| 绑定层 | 无 | 计划引入 R3（UI MVVM 用）；R3 只做**响应式流**，不承担事件路由（v0.7） |
+| 绑定层 | **R3 1.3.1 已引入**：核心库 `R3.dll`（NuGet 包，置于 `Assets/Packages/`）+ Unity 集成 UPM git 包 `com.cysharp.r3` | 只做**响应式流**，不承担事件路由（v0.7）；上手笔记见本地 `LocalNotes/r3-tutorial.md`（不入库） |
 | 资源层 | **Addressables 1.22.3（已安装）** | 资源管理器底层就绪 |
 | DOTS | 未安装 | ECS 对象池的前置依赖，M4 再引 |
 | 已有代码 | `Assets/Zipper/{Core,DI,Pool,Resources}`（asmdef 已建；Resources 含 Asset 句柄三件套） | 骨架已落地，M0 迁移已完成 |
@@ -39,7 +39,7 @@
 | 资源加载 | **Addressables 1.22.3**（+ UniTask.Addressables） | 已装 |
 | **资源键体系** | **框架公共 API 只收 address / label（Addressables 原生 key）** | v0.4 修订：原「枚举键约定」方案**已废弃**；业务键清单归使用工程 |
 | ECS 深度 | 完整 DOTS（Entities + Burst + Jobs + Collections） | M4 |
-| UI 体系 / 架构 | uGUI + TMP；**MVVM**，绑定层用 R3 | R3 尚未引入；R3 = 流加工，不是第二条总线 |
+| UI 体系 / 架构 | uGUI + TMP；**MVVM**，绑定层用 R3 1.3.1（**已引入**） | R3 = 流加工，不是第二条总线 |
 | 依赖注入 | VContainer | 模块经容器装配 |
 | 异步 | UniTask（对外接口统一） | 已切 UPM |
 | 对象池（普通） | 自研 `ZObjectPool<T>` 演进 | 已有骨架 |
