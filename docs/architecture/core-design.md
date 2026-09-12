@@ -1,6 +1,6 @@
 # Zipper.Core 设计 — 基础设施与日志系统
 
-> 状态：**v0.8 草稿，待审阅**
+> 状态：**v0.9 草稿，待审阅**
 > 定位：`docs/planning/technical-roadmap.md` §4.2 中 `Zipper.Core`（基础设施：日志、事件、扩展、公共工具）的展开设计稿。**只给设计思路与思路级伪代码，不含实现代码**。
 > **实施归属**：AI 只负责架构设计与思路级伪代码（供设计参考）；**代码实现由使用者完成**。依据：`docs/standards/agent-role.md`。
 > 已定范围（用户决策 2026-09-06）：日志 Sink = **Console + 文件输出**；Release **剥离 Info 及以下**；**支持运行时动态改级别**。
@@ -240,6 +240,122 @@ Shutdown()：
 | 退出不丢 | 写日志后立即退出 | 退出后文件含尾部日志 |
 | 健壮性 | 目录只读 / 磁盘满 | 不抛异常，文件输出自禁用并 Warn 一次 |
 
+### 3.8 编译期剥离：Release 构建怎么"不带日志"（v0.9 新增）
+
+**三层机制，别混为一谈**：
+
+| 机制 | 做法 | 成本 | 能剥掉什么 |
+|---|---|---|---|
+| **① 编译期剥离** | 方法挂 `[Conditional("符号")]` | **零**（调用、参数求值、字符串插值一起消失） | 整条调用（IL 里不存在） |
+| ② 条件编译 | `#if SYMBOL` 包住调用点 | 零 | 同上，但侵入业务代码 |
+| ③ 运行时过滤 | `IsEnabled(level)` 判定 / `Debug.unityLogger.filterLogType` | 一次判定（先判定则无字符串分配） | 只省"执行"，调用与判定仍在 |
+
+**`[Conditional]` 的三条硬规则（实施必知）**：
+
+1. **多个 `[Conditional]` 之间是"或"**：`[Conditional("UNITY_EDITOR"), Conditional("DEVELOPMENT_BUILD")]` = 定义了**任一**就保留调用。
+2. **只对"直接静态调用"生效**：`ZLog.Info(...)` 可剥；**接口/委托调用（`IZLogger` 路径）剥不掉**，只能靠运行时过滤——这也是"双入口"存在的原因（§3.2）。
+3. **参数表达式一并消失**：Release 里连 `$"..."` 插值都不执行——这正是"零分配"的来源。
+
+**符号从哪来（Unity）**：
+
+| 符号 | 何时定义 | 用途 |
+|---|---|---|
+| `UNITY_EDITOR` | 编辑器内 | 编辑器保留全部级别 |
+| `DEVELOPMENT_BUILD` | 勾选 Development Build 的构建 | 开发包保留全部级别 |
+| 自定义（如 `ZIPPER_LOG_VERBOSE`） | Player Settings 手写 / 构建脚本 `PlayerSettings.SetScriptingDefineSymbols` / asmdef `versionDefines` | 需要更细粒度时才引入 |
+
+**推荐方案（零配置）**：Trace/Debug/Info 挂 `[Conditional("UNITY_EDITOR")] + [Conditional("DEVELOPMENT_BUILD")]`；Warn/Error/Fatal 不挂特性。→ 编辑器与开发包全量、**正式 Release 构建自动只剩 Warn+**，不需要维护任何自定义符号。
+需要"Info 也保留"或"分渠道安静版"时，再上自定义符号 + 构建脚本注入（粒度换复杂度）。
+
+**验证方法**：Release 构建后用 ILSpy 打开 `Zipper.Core.dll` 搜 `ZLog.Info` → 应无调用；或在 `Info` 内埋一行 `Debug.Log("SHOULD_NOT_APPEAR")` 观察输出。
+
+### 3.9 多输出分发：Console + 文件怎么并行（不需要"路由表"）（v0.9 新增）
+
+**分发 = 一个 Sink 列表 + 顺序遍历**（多播）。所谓"路由表"只在需要**差异分发**时才出现，而绝大多数需求用**每个 Sink 自己的级别门槛**就能表达（等价 Serilog 的 `restrictedToMinimumLevel`）。
+
+| 形态 | 说明 | 何时用 |
+|---|---|---|
+| **广播式（推荐）** | Router 把每条日志给所有 Sink，各 Sink 按自己的门槛/谓词过滤 | 默认；Console 收 Info+、文件收 Trace+ 就是两个门槛 |
+| 规则式 | 每条日志按规则挑选 Sink（模块/级别/自定义谓词） | 只有"只有 Error 才写文件""某模块不进文件"这类需求才需要 |
+
+**工程要点**：
+- **Console Sink 必须主线程**（`Debug.Log` 限制）→ Sink 接口带 `RequiresMainThread`；非主线程发布时投递主线程泵。
+- **File Sink 可任意线程**（内部队列 + 后台单线程写）。
+- **失败隔离**：每个 Sink 的 `Write` 单独 try/catch——日志系统自身故障绝不允许抛出影响业务。
+- **顺序有意义**：Console 放前面（异常时至少屏幕上有）。
+- **Sink 列表初始化后只读**：运行中增删会引入线程同步问题；要动态配置就在初始化阶段定。
+
+### 3.10 缓冲与刷盘策略（v0.9 新增）
+
+**结论：要缓冲，但不是"缓冲满才写"，而是"时间或大小任一满足就写"。**
+
+**为什么不能每条都写**：一次文件写 = 系统调用 + 闪存/磁盘写，成本比内存操作高几个数量级；每帧几十条日志会直接吃掉帧率（移动端尤甚）。
+
+**三层缓冲（都要心里有数，别只盯一层）**：
+
+| 层 | 位置 | 控制方式 |
+|---|---|---|
+| 应用层 | 我们的队列 + 批量缓冲 | 双触发策略（下） |
+| 库层 | `StreamWriter` 内部缓冲（默认约 1KB） | `AutoFlush=false`，显式调大 |
+| 系统层 | OS 页缓存 | 不可控；`Flush()` 只是把数据交给 OS，**不等于落盘** |
+
+**双触发起步值**：时间 **500ms～1s**（崩溃时最多丢这段时间）+ 大小 **8～16KB**（避免单次写阻塞过久）。
+
+**级别感知刷盘**：**Error/Fatal 立即刷**（崩溃现场的日志最值钱），Info/Debug 走批量。
+
+**必须 flush 的时机**（漏一个就会丢日志）：
+
+| 时机 | 原因 |
+|---|---|
+| `Application.quitting` | 桌面正常退出 |
+| **`OnApplicationPause(true)` / `OnApplicationFocus(false)`** | **移动端被系统杀进程不会走 quitting**——最常丢日志的地方 |
+| Scope Dispose / 手动 Shutdown | 容器生命周期收尾 |
+| `AppDomain.UnhandledException`（尽力而为） | 崩溃兜底 |
+
+**队列溢出策略**：丢最旧 + **如实记录丢弃条数**（在文件里写一行"因过载丢弃 N 条"）。理由：**"日志撒谎"比丢日志更危险**——事后分析时必须有这个信号。
+
+### 3.11 并发模型（v0.9 新增）
+
+**先界定 Unity 的现实规模**：不是服务端 TPS；这里是"**多个线程偶尔打 + 主线程每帧几十~几百条**"。
+
+**生产者-消费者结构**：
+
+| 角色 | 线程 | 只做什么 |
+|---|---|---|
+| 生产者 | 任意线程 | 判级别 → 格式化 → **无锁入队**（不做 IO） |
+| 主线程泵 | 主线程（Update/PlayerLoop） | 出队 → **Console Sink**（Unity API 限制） |
+| 后台消费者 | 独立线程（单线程） | 批量出队 → 写文件（含刷盘判定） |
+
+**七条纪律**：
+
+1. 生产者只"判级别 + 入队"，**不 lock**（`ConcurrentQueue` 无锁 O(1)；锁争抢会拖慢主线程）。
+2. 写文件**单线程**（多线程写同一文件必然交错或需锁）。
+3. Console 只在主线程调用。
+4. 热路径先 `IsEnabled` 再拼字符串（否则插值先分配，级别判定省不下来）。
+5. 队列有上限，满则**丢最旧 + 计数**——**主线程绝不能被日志阻塞**（宁可丢日志，不可卡帧）。
+6. 加**限流 / 去重折叠**（相同消息连续出现折叠为"×N"）——日志风暴比日志系统本身更致命。
+7. 级别开关用 `volatile`/`Interlocked`（主线程写、其它线程读）；Sink 列表初始化后只读。
+
+**何时才需要更激进的方案**（如 ZLogger 那种 UTF8 直写、零分配结构化日志）：只有真到数万条/秒才有意义。常规做法是**先降级别、加采样**，而不是优化日志系统本身。
+
+### 3.12 与 Serilog 的概念对照（v0.9 新增）
+
+熟悉 Serilog 的话可直接迁移概念：
+
+| Serilog | 本设计 |
+|---|---|
+| `ILogger` / `Log.Information(...)` | `IZLogger` / `ZLog.Info(...)` |
+| `LogEventLevel` | `ZLogLevel` |
+| Sink（`WriteTo.Console()` / `WriteTo.File()`） | `IZLogSink`（`ConsoleSink` / `FileSink`） |
+| `restrictedToMinimumLevel` | 每个 Sink 的**级别门槛**（§3.9） |
+| `MinimumLevel.Override("Module", …)` | 每模块级别阈值（`SetModuleLevel`） |
+| `Enrich.WithProperty(...)` | 模块 tag、句柄 owner |
+| `Log.Logger`（全局静态） | `ZLog`（静态门面，可编译期剥离） |
+| `Serilog.Sinks.Async` | 内置异步队列（本设计默认就是异步） |
+| `flushToDiskInterval` | 时间触发刷盘（§3.10） |
+| `Log.CloseAndFlush()` | `Shutdown()` / Scope Dispose |
+| 结构化属性（JSON 行） | v1 不做（纯文本行）；需要时加 Sink 变体 |
+
 ---
 
 ## 4. 其它模块（简述）
@@ -468,6 +584,7 @@ GameLifetimeScope（Assembly-CSharp，现状）
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.9 | 2026-09-10 | **日志实现机制补详（使用者反馈"不知道怎么写"）**：新增 §3.8 编译期剥离（三层机制对比、`[Conditional]` 三条硬规则、符号来源表、**零配置推荐方案**、验证方法）、§3.9 多输出分发（广播 vs 规则式、"不需要路由表"、Sink 门槛与失败隔离）、§3.10 缓冲与刷盘（双触发、三层缓冲、级别感知刷盘、必须 flush 的四个时机、溢出策略与"日志撒谎"警示）、§3.11 并发模型（生产者-消费者三段结构、七条纪律、何时才需零分配方案）、§3.12 与 Serilog 概念对照表。配套**本地实现教程**（含示例代码，不入库）：`LocalNotes/logging-implementation-guide.md` |
 | v0.8 | 2026-09-10 | **更正 §4.3「不做 R3 版总线」的依据 2（事实性修订）**：原措辞称"Rx `OnError` 终止整条流"据此推出"R3 版必然复制自研内核"——但 **R3 1.3.1 官方 README 明确：R3 用 `OnErrorResume`，异常不会自动退订**，故该前提对 R3 不成立。修订为：不做 R3 版总线的真正理由是**路由**（R3 无"按事件类型全局登记订阅者"机制，`Subject<T>` 是命名实例，仍需人工传递 = 自建路由）；新增"R3 异常模型"澄清段；依据 1–5 结论不变。连带更正 R3 桥设计要点的"异常语义"与 §6「桥的异常边界」待办（桥后链异常不终止链，建议把 `RegisterUnhandledExceptionHandler` 接到框架日志系统） |
 | v0.7 | 2026-09-10 | **事件总线由「双实现」改为「单实现 + R3 桥」（使用者决策）**：删除 `ZR3EventBus`（不再做第二条总线实现），改为在依赖 R3 的桥接程序集提供 `AsObservable` 扩展把总线订阅桥接成 R3 可观察对象；§4.3 新增五条「为什么不做 R3 版总线」决策依据（职能不重叠／内核必然复制／成本在纪律／桥更小更强／地基分层）；「实现选择与归属纪律」表重写（UI 通知回归总线，新增"桥上加工"一行，纪律改为"同一件事只发布一次"）；「带 key 注册两条总线」相关表述与 §6 待办（R3 实现归属、双实现一致性、带 key 注册）一并更新为桥归属／桥异常边界／单总线注册 |
 | v0.6 | 2026-09-06 | **事件总线类型命名统一框架约定**：`NativeEventBus` → **`ZEventBus`**、接口 `IEventBus` → **`IZEventBus`**、R3 封装实现 → **`ZR3EventBus`**（品牌 Zipper 取首字母 Z；接口用 `IZ*`）；新增命名约定说明并指向 `docs/standards/naming-convention.md` |
