@@ -227,6 +227,10 @@ public class ZipperBootstrapper : IAsyncStartable          // 由 VContainer 启
 - 用 `IAsyncStartable`（VContainer 的异步启动，`StartAsync` 返回类型随工程组合变化，本工程为 UniTask）
 - 阶段内如果也想稳定（避免同阶段两个模块互相依赖），可在 `_bootstraps` 里再按类型名排序——**但请优先让同阶段模块彼此独立**（真正的依赖应该跨阶段，而不是靠顺序）
 
+> **为什么这段编排不用 R3（边界说明）**：它是"一次性、有顺序、必须 await"的启动流程，属于**流程编排**，不是"时间轴上的多条流"——R3 的 `Where/Select/Concat` 只是换写法，不会让顺序更可控，反而带来三个代价：可读性下降、异常栈穿过操作符更难定位、异常语义（`OnErrorResume` 不终止流）与"初始化失败即启动失败"相冲突。
+> 更合适的优化只有两条：① 写法简洁化 `foreach (var b in _bootstraps.Where(x => x.Phase == phase)) await b.InitializeAsync(ct);`；② 若同阶段模块彼此独立要并行 → `await UniTask.WhenAll(...)`。
+> R3 在这条路径上唯一有意义的场景是**初始化进度上报**（加载条），那属于"进度事件流"，与本节编排无关。
+
 ### 5.4 容器注册（`GameLifetimeScope`）
 
 ```
