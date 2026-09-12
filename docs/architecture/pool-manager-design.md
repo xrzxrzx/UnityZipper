@@ -316,7 +316,7 @@ TryGetStats<T>(out stats)：
 | 位置 | 差异 |
 |---|---|
 | `IZObjectPoolManager.cs` | ① `DestroyPool`/`ClearPool` 去掉 `prefab` 参数 → `DestroyPool<T>()`/`ClearPool<T>()`；② `CreatePool` 参数收敛为 `ZPoolOptions<T>`；③ **委托类型上移**（不再引用 `ZObjectPool<T>.XXXDelegate`）；④ 新增 `TryGetStats<T>`、`Dispose`；⑤ **不提供** `CreatePoolAsync(address)`（按 address 建池放上层组合器）；⑥ 注释写明"仅主线程 / 一类型一池 / 只接收 GameObject、不持有资源句柄 / 重复创建抛异常" |
-| `ZObjectPool.cs` | ① 新增非泛型基类/基接口（承载 `Count`/`Clear`/`Dispose`/统计）；② 超限行为策略化（替换你标 TODO 的 `throw`）；③ 构造 `internal` ✅ 已做 |
+| `ZObjectPool.cs` | ① 新增非泛型基类/基接口（承载 `Count`/`Clear`/`Dispose`/统计）；② 超限行为策略化（替换你标 TODO 的 `throw`）；③ 构造 `internal` ✅ 已做；④ **构造增加 `IZLogger` 参数**——`internal ZObjectPool(in ZPoolOptions<T> options, IZLogger logger)`，由管理器在建池时传入（用于接池内两处 `//TODO` 日志；**不把 logger 塞进 `ZPoolOptions<T>`**，避免配置对象被注入依赖污染） |
 | `ZObjectPoolManager.cs` | 实现接口 + `PoolEntry { Pool, Prefab }` 登记 + 固定销毁流程（清池 → 移除登记） |
 | `Zipper.Pool.asmdef` | **无需改动**：不引用 `Zipper.Resources`（池只认 `GameObject`）✅ |
 | 上层组合器（新增，位置待定） | `Zipper.Runtime` 的服务或业务侧薄封装：`加载母本 → 建池 → 销毁时先清池再释放母本`（§5.4） |
@@ -408,6 +408,7 @@ poolManager.CreatePool<EnemyView>(options);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.2.8 | 2026-09-10 | §9 差异清单补充：`ZObjectPool<T>` 构造**增加 `IZLogger` 参数**（由管理器传入，用于接池内 TODO 日志）；**不把 logger 放进 `ZPoolOptions<T>`**（避免配置对象被依赖污染）——与 `docs/architecture/logging-design.md` v1.1 §9 对齐 |
 | v0.2.7 | 2026-09-10 | **实现核对通过，池模块（v1）定稿**：`IZObjectPoolManager`/`ZObjectPoolManager`/`ZObjectPool<T>`/`ZObjectPoolBase`/`ZPoolOptions<T>`/`ZPoolState`/`ZPoolsState` 全部落地并核对；已修：`IZLogger`（框架日志）注入 + `Zipper.Pool.asmdef` 引 `Zipper.Core`、`CreatePool` 先判存在再 new、`GetItemsByCount(count)` 返回空 List（不再 null）、`GetItemsByCount(count,result)` 先 `Clear()`、`Return` 用 `item?.ReturnToPool?.Invoke`、`Dispose` 遍历快照。**剩余（待日志模块实现后处理）**：两处 `//TODO 使用框架自带日志库输出`（重复创建、找不到池）与 `Get<T>()` 找不到池时"打日志 or 抛异常"的最终取舍 |
 | v0.2.6 | 2026-09-10 | §4 补充**编辑器/运行期监视器**支持：① 数据模型——监视器遍历 `ZPoolsState.PoolStates` 取 `ZPoolState.Type` 与计数即可，**不要把内部字典交出去**（`ZObjectPoolBase` 为 `internal`，跨程序集看不到；且会赋予监视器操作能力，违背只读原则）；② 新增**非泛型操作入口** `ClearPool(Type)` / `DestroyPool(Type)`（内部走基类 `Clear()`/`Dispose()`，**零反射、零 AOT 风险**，避免 `MakeGenericMethod`）；③ 可选增强 `ZPoolState.Prefab` / `MaxSize` |
 | v0.2.5 | 2026-09-10 | §3.2 补充 **`T` 必须是具体组件类型**：`typeof(T)` 取编译期静态类型（非运行时 `GetType()`），用基类/接口当 `T` 会导致 `CreatePool` 与 `Get` 的 key 不一致、且 `GetComponent<T>()` 拦不住；建议在 `CreatePool<T>` 校验 `IsAbstract`/`IsInterface` 抛参数异常。同时记录 **AOT 结论**：`typeof(T)` 在 IL2CPP 下安全（无反射、类型不会被 strip），需 `link.xml` 的只有运行时反射构造泛型/字符串反射（本设计未用） |
