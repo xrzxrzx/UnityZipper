@@ -171,10 +171,15 @@ Zipper.DI（组装层）
 ### 5.2 模块 Bootstrap 契约（`IZModuleBootstrap`）
 
 ```
+public enum ZBootPhase          // 启动阶段（语义化，替代"魔法数字 Order"）
+{
+    Logging = 0, Events = 100, Resources = 200, Pools = 300, UI = 400,
+}
+
 public interface IZModuleBootstrap
 {
-    int Order { get; }                                   // 小的先执行
-    UniTask InitializeAsync(CancellationToken ct);        // 统一异步（资源加载天然异步）
+    ZBootPhase Phase { get; }                              // 属于哪个启动阶段
+    UniTask InitializeAsync(CancellationToken ct);          // 统一异步（资源加载天然异步）
 }
 ```
 
@@ -182,27 +187,45 @@ public interface IZModuleBootstrap
 - 统一 `UniTask` + `CancellationToken`（roadmap 已定：对外异步一律 UniTask）
 - 失败策略：**抛异常 → 启动失败**（可见、可定位）；若某模块允许降级，由该模块自行 catch 并记录（例如文件 Sink 不可用 → 降级为仅 Console）
 
-### 5.3 总 Bootstrap（`ZipperBootstrapper`）
+### 5.3 总 Bootstrap（`ZipperBootstrapper`）：**阶段顺序显式写在代码里**
 
 ```
 public class ZipperBootstrapper : IAsyncStartable          // 由 VContainer 启动
 {
-    readonly IReadOnlyList<IZModuleBootstrap> _bootstraps;   // 集合注入
+    readonly IReadOnlyList<IZModuleBootstrap> _bootstraps;   // 集合注入（顺序不重要）
 
     public ZipperBootstrapper(IEnumerable<IZModuleBootstrap> bootstraps)
-        => _bootstraps = bootstraps.OrderBy(x => x.Order).ToList();
+        => _bootstraps = bootstraps.ToList();
 
     public async UniTask StartAsync(CancellationToken ct)
     {
-        foreach (var b in _bootstraps)
-            await b.InitializeAsync(ct);
+        // ↓↓↓ 顺序在这里一眼看清（编译期可见、单点控制），不依赖任何运行时约定
+        await RunPhase(ZBootPhase.Logging,   ct);
+        await RunPhase(ZBootPhase.Events,    ct);
+        await RunPhase(ZBootPhase.Resources, ct);
+        await RunPhase(ZBootPhase.Pools,     ct);
+    }
+
+    async UniTask RunPhase(ZBootPhase phase, CancellationToken ct)
+    {
+        foreach (var b in _bootstraps)                 // 阶段内顺序无关紧要
+            if (b.Phase == phase)
+                await b.InitializeAsync(ct);
     }
 }
 ```
 
-- **从容器获取**（VContainer 支持 `IEnumerable<T>` 集合注入 ✓）——新增模块只要注册成 `IZModuleBootstrap`，**总 Bootstrap 无需改动**
-- 顺序由 `Order` 显式决定（不依赖注册顺序，后者不可靠）
+**为什么这样写（关键结论）**：
+
+| 做法 | 顺序可控性 | 新增模块 | 评价 |
+|---|---|---|---|
+| 遍历集合直接 await | ❌ 不可控（枚举顺序未知） | 不用改代码 | 你担心的那种——**不要用** |
+| 按 `int Order` 排序后 await | ⚠️ **运行期约定**：忘写/重复/写错 → 静默错序，无编译期保障 | 不用改代码 | 能用，但把"顺序正确性"押在每个模块自觉上 |
+| **阶段顺序显式写死 + 阶段内遍历**（✅ 采纳） | ✅ **完全可控**：阶段顺序在代码里，改动集中一处、一眼看清 | 阶段内新增不用改代码；**新阶段**才加一行 | 兼顾"可控"与"低维护" |
+| 完全显式逐个调用（`await _logBootstrap…; await _resBootstrap…`） | ✅ 最硬（编译期强制） | 每加模块改一行 | 模块很少（4~6 个）时也可接受 |
+
 - 用 `IAsyncStartable`（VContainer 的异步启动，`StartAsync` 返回类型随工程组合变化，本工程为 UniTask）
+- 阶段内如果也想稳定（避免同阶段两个模块互相依赖），可在 `_bootstraps` 里再按类型名排序——**但请优先让同阶段模块彼此独立**（真正的依赖应该跨阶段，而不是靠顺序）
 
 ### 5.4 容器注册（`GameLifetimeScope`）
 
@@ -219,7 +242,15 @@ builder.RegisterEntryPoint<ZipperBootstrapper>(Lifetime.Singleton);
 ```
 
 > ⚠️ **与现状的差异**：现在 `ResourcesBootstrapper` 是**直接** `RegisterEntryPoint`（自己启动）；改为实现 `IZModuleBootstrap`、注册进集合，由总 Bootstrap 统一调用。日志模块同理（不再有静态 `ZLogBootstrap.Initialize`）。
-> **为何要分层**：① 启动顺序显式可控（日志必须先于一切）；② 新增模块不动总 Bootstrap；③ 模块可裁剪（不注册就不启动）。
+> **为何要分层**：① 启动顺序**显式可控**（日志阶段先于资源阶段，写在总 Bootstrap 里）；② 阶段内新增模块不动总 Bootstrap；③ 模块可裁剪（不注册就不启动）。
+
+### 5.5 补充：能否让"顺序"根本不需要管？
+
+有一个更彻底的方向（**可选，v1 不做**）：让日志"**注入即就绪**"——把 Router/Sink 的装配放在 `ZLogger` 的构造（或一个惰性初始化器）里，**主线程驱动对象改为首次需要 Console 输出时惰性创建**。这样任何模块拿到 `IZLogger` 就能直接用，**不再依赖"日志先启动"这个阶段顺序**。
+
+- 好处：顺序约束从"框架约定"降级为"根本不存在"
+- 代价：日志装配时机变得隐式（构造里做 IO/创建 GameObject 需要主线程与时机保证），出错时更难定位；且驱动对象惰性创建本身也依赖"第一次调用发生在主线程"
+- **结论**：v1 采用 §5.3 的"显式阶段"（简单、可控、易调试）；惰性方案留作将来简化顺序依赖的备选
 
 ---
 
@@ -361,6 +392,7 @@ ZLogRouter（实例）
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v1.2 | 2026-09-10 | **启动顺序机制改硬**（回应"顺序不可控"的质疑）：`IZModuleBootstrap` 的 `int Order` 改为语义化 **`ZBootPhase` 枚举**；总 Bootstrap **把阶段顺序显式写在代码里**（`await RunPhase(Logging) → RunPhase(Events) → RunPhase(Resources) → RunPhase(Pools)`），阶段内才遍历集合 → 顺序**编译期可见、单点可控**，同时阶段内新增模块无需改代码；§5.3 补四种做法对照表；新增 §5.5"惰性初始化让顺序无关"的可选方向 |
 | v1.1 | 2026-09-10 | 落实第二轮决策：① 编译期剥离**定案方案 a**（放弃剥离，运行时过滤 + `IsEnabled` 前置判定）；② 主线程驱动**定案方案 a**（驱动对象 + `ZMainThreadDispatcherDriver`）；③ caller 定为**三件套**（`nameof(类名)` 显式 + `[CallerMemberName]` + `[CallerLineNumber]`）；④ `context` 保留并新增 §4.1 **用法说明**（Console 对象关联与双击跳转）；⑤ **Bootstrap 分层**（§5：`IZModuleBootstrap` 契约 + 总 `ZipperBootstrapper` 从容器取集合、按 `Order` 依次调用；同步说明与现有 `ResourcesBootstrapper` 的差异）；⑥ 文件 Sink 新增 **§7.2 按日期切分**（跨零点写新文件；不轮转、不清理）；⑦ **去掉去重折叠**（§8：Console 自带 Collapse 已覆盖显示层）；⑧ 池侧改为**构造参数**接收 `IZLogger`（不污染 `ZPoolOptions<T>`） |
 | v1.0 | 2026-09-10 | 初稿：按使用者 6 条约束重做日志设计——Bootstrap 实例化、主线程分发器实例化、5 级、接口带 caller、取消 `ZLogModule`、取消静态门面；记录"放弃编译期剥离"的连锁后果；补齐装配/驱动/Sink/并发/验收/待决项 |
 
