@@ -72,7 +72,7 @@ Zipper.Runtime       — 组装层：VContainer Scope、引导                  
 Zipper.Editor        — 编辑器扩展、校验                                 仅 Editor 平台
 ```
 
-- 单向依赖：`Core → {Pool, Resources} → {Audio, UI}`；**`Pool` 与 `Resources` 互不依赖**——池只接收 `GameObject prefab`，不引用资源管理器类型；"按 address 建池 + 母本托管"由**上层组合器**（同时依赖两者）拼接（见 `docs/architecture/pool-manager-design.md` §5.3）；`ECS.Pool` 自成一体。
+- 单向依赖：`Core → {Pool, Resources} → {Audio, UI}`；**`Pool` 与 `Resources` 互不依赖**——池只接收 `GameObject prefab`，不引用资源管理器类型；"按 address 建池 + 母本托管"由**上层组合器**（同时依赖两者）拼接（见 `docs/architecture/pool-manager-design.md` §5.4）；`ECS.Pool` 自成一体。
 - **asmdef 引用要求（v0.4 修订）**：
   - `Zipper.Core`：**references 为空**（只依赖引擎）
   - 其余 Zipper.*：按各自需要显式引用（UniTask / VContainer / 官方包程序集）；`Zipper.Resources` 需引 **UniTask、Unity.Addressables、Unity.ResourceManager、UniTask.Addressables**（**asmdef 引用不传递**，缺一即编译期报类型不可见）

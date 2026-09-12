@@ -4,7 +4,7 @@
 > 定位：`docs/planning/technical-roadmap.md` §5.4.1「普通对象池」的展开设计稿，同时是使用者 `IZObjectPoolManager` 初稿的**评审定稿**。**只给设计思路与接口形态，不含实现代码**。
 > **实施归属**：AI 只负责架构设计与思路级伪代码；**代码实现由使用者完成**（`docs/standards/agent-role.md`）。
 > 关联：`docs/architecture/resource-manager-design.md`（§7 F3 母本与池化）、`docs/architecture/core-design.md`、`docs/standards/naming-convention.md`
-> 变更记录：v0.1 初稿；**v0.2（使用者纠正）**——撤销"`CreatePoolAsync(address)` + 管理器托管母本"的设计：**池管理器只接收 `GameObject prefab`，不碰资源句柄、不依赖 `Zipper.Resources`**；"按 address 建池 + 母本托管"改由**上层组合器**承担（§5.3）。
+> 变更记录：v0.1 初稿；**v0.2（使用者纠正）**——撤销"`CreatePoolAsync(address)` + 管理器托管母本"的设计：**池管理器只接收 `GameObject prefab`，不碰资源句柄、不依赖 `Zipper.Resources`**；"按 address 建池 + 母本托管"改由**上层组合器**承担（§5.4）。
 
 ---
 
@@ -13,7 +13,7 @@
 | 读者 | 建议路径 |
 |---|---|
 | 要立刻改接口的人 | §3 寻址模型 → §4 设计要素 → §9 差异清单 |
-| 要把实现写出来的人 | §2 边界 → §5 内部结构（含 §5.3 组合器）→ §6 流程 → §7 雷区 |
+| 要把实现写出来的人 | §2 边界 → §5 内部结构（含 §5.4 组合器）→ §6 流程 → §7 雷区 |
 | 要验收的人 | §8 验收标准 |
 
 ---
@@ -26,7 +26,7 @@
 | **隐藏构造** | `ZObjectPool` 构造已定为 `internal`（✅ 已实施）——只有管理器能建池，避免"到处 new 池、配置不一致" |
 | **集中生命周期** | Scope 关闭时一次 `Dispose()` 销毁全部池（实例全部回收），不留"忘了清的池" |
 | **集中统计** | 每个池的活跃/空闲/总数可统一查询（答辩演示、性能观察都用得上） |
-| **为上层组合留好接缝** | 管理器只做"给 prefab 就建池"这一件事；"按 address 建池 + 母本托管"由上层的**组合器**（同时依赖 Pool 与 Resources）拼接——见 §5.3 |
+| **为上层组合留好接缝** | 管理器只做"给 prefab 就建池"这一件事；"按 address 建池 + 母本托管"由上层的**组合器**（同时依赖 Pool 与 Resources）拼接——见 §5.4 |
 
 > **边界一句话**：池管理器**只认 `GameObject`**。它不需要知道 `PrefabAsset`、更不需要引用 `Zipper.Resources`——"资源怎么来的"是别人的事。
 
@@ -41,7 +41,7 @@
 2. 池内实例的统一回收（`Clear` / `Dispose`）
 
 **不管什么**：
-- ❌ **资源句柄**：母本的加载与释放不在这里（见 §5.3 组合器）——池管理器只接收 `GameObject prefab`
+- ❌ **资源句柄**：母本的加载与释放不在这里（见 §5.4 组合器）——池管理器只接收 `GameObject prefab`
 - ❌ **ECS 对象池**——roadmap §5.4.2 已定"两池各自独立"，将来若需要另设管理器
 - ❌ 实例的**显隐/重置**——组件实现 `IZObjectPoolItem` 的职责（`OnGet`/`OnReturn` 里自己 `SetActive`）
 - ❌ "按时间自动回收""LRU 驱逐"等高级策略——YAGNI
@@ -126,7 +126,26 @@ ZObjectPoolManager（Scope 单例，主线程独占）
 | `Dictionary<Type, object>` + 取出时 `(ZObjectPool<T>)` 转型 | ⚠️ 能跑但丢类型安全；`typeof(T)` 精确匹配（用接口/基类查不到）；`Dispose` 遍历要二次判断 |
 | **池加非泛型基类/基接口**（承载 `Count`/`Clear`/`Dispose`/统计等与 `T` 无关的操作），字典存基类 | ✅ **推荐**：容器级 `Dispose` 能干净遍历；与 `AssetHandleBase` 同一手法（你已熟悉） |
 
-### 5.2 池管理器**不持有**资源句柄（v0.2 明确）
+### 5.2 基类不要设计成"空对象"（v0.2.3 明确）
+
+**空基类（仅类型身份）不够用**：管理器 `Dispose()` 需遍历所有池并销毁实例，而遍历时 `T` 未知——C# 无法把 `Dictionary` 的 `Type` key 变成泛型参数去调 `ZObjectPool<T>.Clear()`。空基类只能靠反射（`MakeGenericMethod`）或在 entry 内另存 `Action clear` 委托绕开，更绕更弱。
+
+**最小成员集（只放与 `T` 无关的能力）**：
+
+| 成员 | 必要性 | 说明 |
+|---|---|---|
+| `Clear()` | ★ **必须** | 管理器遍历时统一销毁实例 |
+| `Dispose()`（可继承 `IDisposable`） | 推荐 | 语义收尾（默认实现可转调 `Clear()`） |
+| `CountAll` / `CountActive` / `CountInactive` | 推荐 | 统计、诊断 |
+| `Prefab`（或 `ItemType`） | 可选 | 诊断/日志用 |
+
+**依赖 `T` 的成员留在 `ZObjectPool<T>`**：`GetItem()`、`GetItemsByCount(...)`、构造 —— 管理器经"泛型方法 + `as` 转型"调用（§5.5：转型无装箱）。
+
+**改造量几乎为零**：`ZObjectPool<T>` 里已有 `CountAll`/`CountActive`/`CountInactive`/`Clear()` → 只需在基类声明、派生类加 `override`，无新逻辑。
+
+**命名提示**：按 `naming-convention.md` §4，"Z 前缀 = 对外概念与入口，内部机制类型不加前缀"（例：`AssetHandleBase`）——严格说基类应为 `ObjectPoolBase`；但它与 `ZObjectPool<T>` 属同一家族，用 `ZObjectPoolBase` 也讲得通（一致性更好）。**由使用者定**，定了同步规范或文档。
+
+### 5.3 池管理器**不持有**资源句柄（v0.2 明确）
 
 管理器里**没有** `PrefabAsset`、没有 `OwnsPrefab` 标志——它只记着"这个池是用哪个 `GameObject` 建的"（用于诊断/重建提示）。因此：
 
@@ -134,7 +153,7 @@ ZObjectPoolManager（Scope 单例，主线程独占）
 - 池管理器**不依赖** `Zipper.Resources`（asmdef 无需加引用）
 - 资源什么时候加载、什么时候释放，完全由**上层组合器**掌握
 
-### 5.3 按 address 建池 + 母本托管：放上层组合器（v0.2 新增）
+### 5.4 按 address 建池 + 母本托管：放上层组合器（v0.2 新增）
 
 "从 Addressables 加载母本 → 建池 → 销毁时先清池再释放母本"这组编排，放在**同时依赖两者**的地方（`Zipper.Runtime` 的服务，或业务侧的薄封装）：
 
@@ -157,7 +176,7 @@ ZObjectPoolManager（Scope 单例，主线程独占）
 - 若多个业务点都要"按 address 建池"，就把组合器做成 **Runtime 层的一个服务**，避免每处各写一遍（顺序写错就出事故）
 - 组合器自身也应支持"统一销毁全部托管的母本"（Scope 关闭时先清池再释放）
 
-### 5.4 转型会不会装箱？（v0.2.1 澄清：不会）
+### 5.5 转型会不会装箱？（v0.2.1 澄清：不会）
 
 `ZObjectPoolBase` ↔ `ZObjectPool<T>` 之间的转换**没有任何装箱**：
 
@@ -207,7 +226,7 @@ DestroyPool<T>()：
   1) 取出 entry；不存在 → 静默返回 + 一条 Warn 日志（销毁类接口不该炸）
   2) entry.Pool.Clear()      ← 销毁全部克隆体
   3) 移除登记
-  （母本释放不在这里 —— 由上层组合器负责，见 §5.3）
+  （母本释放不在这里 —— 由上层组合器负责，见 §5.4）
 ```
 
 #### F4 管理器 Dispose（Scope 关闭）
@@ -234,12 +253,12 @@ TryGetStats<T>(out stats)：
 |---|---|---|---|
 | 1 | prefab 与 `T` 两套寻址混用 | `Get<T>` 行为不可预期 | §3 全程用 `T` |
 | 2 | `Dictionary<Type, object>` + 盲目转型 | 转型异常 / 丢类型安全 | 用非泛型基类（§5.1） |
-| 3 | **组合器里漏掉"先清池再释放母本"** | 实例子资源 Missing、扩容失败 | 顺序纪律收敛到组合器（§5.3），别散落在业务代码 |
+| 3 | **组合器里漏掉"先清池再释放母本"** | 实例子资源 Missing、扩容失败 | 顺序纪律收敛到组合器（§5.4），别散落在业务代码 |
 | 4 | 重复 `CreatePool<T>` 静默覆盖 | 旧池实例变孤儿 | 抛异常（§3.2） |
 | 5 | 忘记 `Dispose()` | Scope 关闭后池与实例泄漏 | 容器 `Dispose` 统一清理 |
 | 6 | 跨线程使用池 | Unity 对象跨线程未定义行为 | 注释声明 + 仅主线程 |
 | 7 | `initialSize` 设太大 | 首帧卡顿/内存尖峰 | 按需预热；大池考虑分帧预热 |
-| 8 | 让池管理器去管资源（v0.1 的错法） | Pool↔Resources 互相牵扯、循环依赖风险 | 池只认 GameObject（§5.2） |
+| 8 | 让池管理器去管资源（v0.1 的错法） | Pool↔Resources 互相牵扯、循环依赖风险 | 池只认 GameObject（§5.3） |
 | 9 | 用管理器塞 ECS 池 | 职责混淆 | §2 边界：各自独立 |
 | 10 | 同 `T` 用不同 prefab（绕过一类型一池） | 拿到"另一种对象"的实例，逻辑错乱 | 约束写进注释；需要就上 PoolKey（§3.3） |
 
@@ -271,7 +290,7 @@ TryGetStats<T>(out stats)：
 | `ZObjectPool.cs` | ① 新增非泛型基类/基接口（承载 `Count`/`Clear`/`Dispose`/统计）；② 超限行为策略化（替换你标 TODO 的 `throw`）；③ 构造 `internal` ✅ 已做 |
 | `ZObjectPoolManager.cs` | 实现接口 + `PoolEntry { Pool, Prefab }` 登记 + 固定销毁流程（清池 → 移除登记） |
 | `Zipper.Pool.asmdef` | **无需改动**：不引用 `Zipper.Resources`（池只认 `GameObject`）✅ |
-| 上层组合器（新增，位置待定） | `Zipper.Runtime` 的服务或业务侧薄封装：`加载母本 → 建池 → 销毁时先清池再释放母本`（§5.3） |
+| 上层组合器（新增，位置待定） | `Zipper.Runtime` 的服务或业务侧薄封装：`加载母本 → 建池 → 销毁时先清池再释放母本`（§5.4） |
 | `docs/architecture/resource-manager-design.md` | §7 F3 的托管建议改为"由**上层组合器**负责" ✅ 本次已同步 |
 | `GameLifetimeScope` | 注册 `IZObjectPoolManager → ZObjectPoolManager`（Singleton） |
 
@@ -349,9 +368,10 @@ poolManager.CreatePool<EnemyView>(options);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.2.3 | 2026-09-10 | 新增 §5.2「**基类不要设计成"空对象"**」：空基类只解决"存/取转型"，**解决不了管理器统一清理**（遍历时 `T` 未知，无法调 `ZObjectPool<T>.Clear()`）；给出最小成员集（`Clear` 必须 + `Count*` 推荐 + `Prefab` 可选），并指出改造量几乎为零（池里已有这些成员）；提示基类命名口径（`ObjectPoolBase` vs `ZObjectPoolBase`）由使用者定。§5 编号顺延（→ 5.1–5.5）并同步全文引用 |
 | v0.2.2 | 2026-09-10 | 新增**附录 A：`ZPoolOptions<T>` 形态示意**——落实 §4 细节 1 的"方案 c + BCL `Action<T>`"：配置对象字段清单、池构造收 options、**必须拷贝值（不持有引用）**、四个调用时机、管理器接口签名、调用方对象初始化器写法、5 条易错细节 |
-| v0.2.1 | 2026-09-10 | 澄清两个实现疑问：① 新增 §5.4「转型会不会装箱」——**基类↔派生/接口↔class 都是引用转换，无装箱无分配**（装箱只发生在值类型→object/接口，而 `T : Component` 必为 class）；② §4 细节 1 改写为"委托类型的归宿"三方案对比（**推荐收进 `ZPoolOptions<T>`**；**不能放进非泛型基类**，因委托参数是 `T`） |
-| v0.2 | 2026-09-10 | **使用者纠正**：撤销"`CreatePoolAsync(address)` + 池管理器托管母本"设计——**池管理器只接收 `GameObject prefab`，不碰资源句柄、不依赖 `Zipper.Resources`**；新增 §5.3「按 address 建池 + 母本托管放上层组合器」（含伪代码与顺序纪律归属）；§1/§2/§4/§5/§6/§7/§8/§9/§10 全面改写；删除"依赖方向待决"（已定：Pool 与 Resources 互不依赖） |
+| v0.2.1 | 2026-09-10 | 澄清两个实现疑问：① 新增 §5.5「转型会不会装箱」——**基类↔派生/接口↔class 都是引用转换，无装箱无分配**（装箱只发生在值类型→object/接口，而 `T : Component` 必为 class）；② §4 细节 1 改写为"委托类型的归宿"三方案对比（**推荐收进 `ZPoolOptions<T>`**；**不能放进非泛型基类**，因委托参数是 `T`） |
+| v0.2 | 2026-09-10 | **使用者纠正**：撤销"`CreatePoolAsync(address)` + 池管理器托管母本"设计——**池管理器只接收 `GameObject prefab`，不碰资源句柄、不依赖 `Zipper.Resources`**；新增 §5.4「按 address 建池 + 母本托管放上层组合器」（含伪代码与顺序纪律归属）；§1/§2/§4/§5/§6/§7/§8/§9/§10 全面改写；删除"依赖方向待决"（已定：Pool 与 Resources 互不依赖） |
 | v0.1 | 2026-09-10 | 初稿：基于使用者 `IZObjectPoolManager` 初稿的评审定稿——一类型一池 / 全程用 `T` 寻址 / 泛型存储 / 接口收敛 / 十条雷区 / 验收与差异清单 |
 
 > 审批：本文件为设计草稿，不含代码实现；由使用者据其自行实现，AI 不代写代码（见 `docs/standards/agent-role.md`）。
