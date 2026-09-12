@@ -70,7 +70,7 @@ public interface IZModuleBootstrap
 }
 ```
 
-- **契约放 `Zipper.Core`**（如 `Core/Boot/`）：零依赖层，所有模块都能实现，不反向依赖组装层
+- **契约放 `Zipper.Core`**（如 `Core/Boot/`）：底层契约层（Core 仅依赖 Unity + UniTask），所有模块都能实现，不反向依赖组装层
 - 统一 `UniTask` + `CancellationToken`（roadmap：对外异步一律 UniTask）
 - Bootstrap 只做**装配 / 初始化**，不含业务逻辑
 
@@ -130,7 +130,7 @@ public class ZipperBootstrapper : IAsyncStartable          // 由 VContainer 启
 
 | 角色 | 放哪 | 理由 |
 |---|---|---|
-| 契约 `IZModuleBootstrap` + `ZBootPhase` | **`Zipper.Core`**（`Core/Boot/`） | 零依赖契约层；所有模块都能实现，不反向依赖组装层 |
+| 契约 `IZModuleBootstrap` + `ZBootPhase` | **`Zipper.Core`**（`Core/Boot/`） | 底层契约层（Core 仅依赖 Unity + UniTask）；所有模块都能实现，不反向依赖组装层 |
 | **各模块的 Bootstrap**（`ZLoggerBootstrap` / `ZResourceBootstrap` / `ZObjectPoolBootstrap`） | **各模块程序集内**（`Core/Logging/`、`Resources/`、`Pool/`） | ① **`internal` 可见性（硬约束）**：Bootstrap 常要访问模块内部类型（Router/Sink/dispatcher、池基类等），放组装层程序集看不到，只能改 public 或加 `InternalsVisibleTo`；② 模块自包含、可裁剪；③ 依赖方向干净（只依赖自身 + Core 契约） |
 | **总 Bootstrap**（`ZipperBootstrapper`） | **组装层**（`Zipper.DI`，未来 `Zipper.Runtime`） | 装配与顺序编排正是组装层职责 |
 | 容器注册代码 | 组装层（`GameLifetimeScope.Configure`） | 同上 |
@@ -247,6 +247,7 @@ builder.RegisterEntryPoint<ZipperBootstrapper>(Lifetime.Singleton);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v1.0.1 | 2026-09-12 | 措辞同步：Core 依赖边界更正为"**仅依赖 Unity + UniTask**"（契约的 `UniTask` 返回类型所致），详见 `core-design.md` v0.9.3 / `roadmap` v0.10 |
 | v1.0 | 2026-09-10 | 初稿：从 `logging-design.md` §5 迁出并扩展为通用机制——分层理由、`IZModuleBootstrap`/`ZBootPhase` 契约、总 Bootstrap 显式阶段编排（含四方案对照与"不用 R3"边界）、位置约定（注册 vs 初始化、现状改动点）、容器注册、`CancellationToken` 用法、失败策略、惰性初始化备选、各模块启动清单、验收与待决项 |
 
 > 审批：本文件为设计草稿，不含代码实现；由使用者据其自行实现，AI 不代写代码（见 `docs/standards/agent-role.md`）。

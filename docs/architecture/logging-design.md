@@ -197,7 +197,7 @@ ZLoggerBootstrap.InitializeAsync：
     Dispose：销毁该对象
 ```
 
-- `Internal/ZMainThreadDispatcherDriver.cs` 是 Core 内**唯一**的 MonoBehaviour（不引 UniTask / VContainer，Core 零框架依赖不变）
+- `Internal/ZMainThreadDispatcherDriver.cs` 是 Core 内**唯一**的 MonoBehaviour（Core 不引 VContainer / Addressables / R3；仅引 UniTask 作为异步契约基础）
 - 备选（记录备查）：PlayerLoop 注入（无额外对象、代码更复杂）；外部驱动（依赖场景对象，顺序易错）
 
 **IL2CPP / 脚本后端兼容性（澄清）**：
@@ -210,7 +210,7 @@ ZLoggerBootstrap.InitializeAsync：
 - 本设计用到的都是**编译期确定类型**的路径：`new GameObject(...)`、`AddComponent<ZMainThreadDispatcherDriver>()`（泛型、AOT 静态实例化）、`DontDestroyOnLoad`、引擎回调 `Update()`——**均非反射**，IL2CPP 下无需任何额外配置。
 - 需要避免的是反射式替代写法：`AddComponent(Type)`（运行期类型）、`MakeGenericMethod/MakeGenericType`、`System.Reflection.Emit`——本设计**均未使用**（Core 也不引任何 Emit 库）。
 - **主线程派发与脚本后端无关**：`Debug.Log` 的主线程约束来自 Unity API 的线程模型，Mono 与 IL2CPP 相同。
-- 若不想新增隐藏对象（可选替代）：① PlayerLoop 注入（无 MonoBehaviour，但要重建 `PlayerLoopSystem` 并处理域重载，调试更难）；② 由已有 MonoBehaviour（如 `GameLifetimeScope`）在 `Update()` 中代跑 `Pump()`（零新增对象，但把日志输出绑在该对象存活上）；③ 上层改用 UniTask/R3 的 PlayerLoop 工具（Core 零依赖，不适用）。**v1 仍采用驱动对象**（自包含、简单、可控每帧上限）。
+- 若不想新增隐藏对象（可选替代）：① PlayerLoop 注入（无 MonoBehaviour，但要重建 `PlayerLoopSystem` 并处理域重载，调试更难）；② 由已有 MonoBehaviour（如 `GameLifetimeScope`）在 `Update()` 中代跑 `Pump()`（零新增对象，但把日志输出绑在该对象存活上）；③ 上层改用 UniTask/R3 的 PlayerLoop 工具（Core 不引这些库，故不适用）。**v1 仍采用驱动对象**（自包含、简单、可控每帧上限）。
 
 ---
 
@@ -312,6 +312,7 @@ ZLogRouter（实例）
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v1.4.1 | 2026-09-12 | 措辞同步：Core 的依赖边界更正为"**仅依赖 Unity + UniTask**（不引 VContainer / Addressables / R3）"——因为启动契约 `IZModuleBootstrap.InitializeAsync` 返回 `UniTask`（详见 `core-design.md` v0.9.3、`roadmap` v0.10） |
 | v1.4 | 2026-09-10 | **Bootstrap 机制整体迁出**：原文 §5「Bootstrap 分层」的全部内容（契约 `IZModuleBootstrap`/`ZBootPhase`、总 Bootstrap 阶段编排与四方案对照、位置约定、容器注册、`CancellationToken` 用法、失败策略、惰性初始化备选）迁移并扩展为独立文档 **`docs/architecture/bootstrap-design.md`（v1.0）**；本文 §5 仅保留"日志模块的启动接入"（阶段 = `Logging`、职责、收尾不绑 ct、位置、与资源模块的先后关系），其余章节编号不变 |
 | v1.3 | 2026-09-10 | 新增 §5.5 Bootstrap 位置约定（契约归 Core、模块 Bootstrap 归模块程序集、总编排与注册归组装层）※ 该节已随 v1.4 迁出 |
 | v1.2 | 2026-09-10 | **启动顺序机制改硬**：`int Order` → 语义化 `ZBootPhase`；总 Bootstrap 把阶段顺序显式写在代码里，阶段内才遍历集合 ※ 该节已随 v1.4 迁出 |

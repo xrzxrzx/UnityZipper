@@ -1,6 +1,6 @@
-# Zipper Unity 框架 — 技术路线规划（v0.9 待审批）
+# Zipper Unity 框架 — 技术路线规划（v0.10 待审批）
 
-> 状态：**v0.9 草稿，待审批**
+> 状态：**v0.10 草稿，待审批**
 > 定位：本文件是框架开发的总体技术路线，回答「做什么、怎么做、按什么顺序做」；**不含代码实现**。
 > 依据：协调者规范（先文档、后编码；无批准、不实施）；`docs/standards/agent-role.md`（AI 只做设计，代码由使用者实现）。
 > 变更记录：v0.2 融入调研结论；v0.3 定为 **.unitypackage 右键导出、拆箱即用**（放弃 UPM 包形态）；**v0.4（2026-09-06）** 同步近期现实与决策——现状盘点更新、资源管理器键体系改为 address/label、Core 定为"零框架依赖"例外、新增事件总线决策、新增 Core 基础设施一节、里程碑状态刷新；**v0.5** 事件总线改**双实现**（自研 + R3 封装，R3 只负责 UI 通知）；**v0.6** 事件总线命名统一框架约定（`IZEventBus` / `ZEventBus` / `ZR3EventBus`，见命名规范）；**v0.7（2026-09-06）** 事件总线由双实现**收敛为单实现 + R3 桥**（删除 `ZR3EventBus`，R3 只做响应式流与订阅侧操作符加工）；**分发相关（UPM 依赖与"随包自包含"的冲突）按使用者决定暂缓，待其另行决策**。
@@ -43,7 +43,7 @@
 | 依赖注入 | VContainer | 模块经容器装配 |
 | 异步 | UniTask（对外接口统一） | 已切 UPM |
 | 对象池（普通） | 自研 `ZObjectPool<T>` 演进 | 已有骨架 |
-| **事件总线** | **单实现**：`IZEventBus` 接口 + `ZEventBus`（均在 Core，零依赖，容器注册为 Scope 单例）；**R3 桥**（`AsObservable` 扩展，依赖 R3 的程序集，不进 Core）只做订阅侧操作符加工 | v0.7 定案（v0.5 双实现已废弃）：**事件路由统一走总线**，不再按 UI/非 UI 分两条总线；**同一件事只发布一次**，需要节流/合并的一方在订阅侧（R3 桥）加工 |
+| **事件总线** | **单实现**：`IZEventBus` 接口 + `ZEventBus`（均在 Core，不引第三方框架，容器注册为 Scope 单例）；**R3 桥**（`AsObservable` 扩展，依赖 R3 的程序集，不进 Core）只做订阅侧操作符加工 | v0.7 定案（v0.5 双实现已废弃）：**事件路由统一走总线**，不再按 UI/非 UI 分两条总线；**同一件事只发布一次**，需要节流/合并的一方在订阅侧（R3 桥）加工 |
 | 命名空间 | `Zipper.*` | 与现状一致 |
 
 **版本基线**：UniTask 2.5.11（UPM git）、Addressables 1.22.3、VContainer 1.19.0；DOTS 相关（Entities 1.0.16 等）待 M4 以 Package Manager 实际解析为准。
@@ -56,13 +56,13 @@
 2. **容器装配**：模块实例由 VContainer 组装注入。
 3. **异步统一**：对外异步接口一律 UniTask，支持 CancellationToken。
 4. **依赖倒置**：模块面向接口编程（UI/音频只依赖资源管理器接口）。
-5. **地基零框架依赖（v0.4 新增）**：`Zipper.Core` 只依赖 Unity 引擎，不引 VContainer / UniTask / Addressables / R3——保证任何层都能引用它而不被迫传递依赖。
+5. **地基仅依赖 UniTask（v0.4 制定，v0.10 按实现修订）**：`Zipper.Core` 只依赖 Unity 引擎 + **UniTask**——因为异步契约 `IZModuleBootstrap.InitializeAsync` 的返回类型就是 `UniTask`，这是必然依赖；**不引 VContainer / Addressables / R3**，保证任何层都能引用它而不被迫传递框架依赖。
 6. **先核心后外围**：Core、对象池、资源为地基，UI/音频为上层，ECS 池独立。
 
 ### 4.2 程序集依赖
 
 ```
-Zipper.Core          — 基础设施：日志系统、事件总线、断言、扩展、工具   （零框架依赖）
+Zipper.Core          — 基础设施：日志系统、事件总线、断言、扩展、工具   （仅依赖 UniTask）
 Zipper.Pool          — 普通对象池（ZObjectPool<T> 演进）                依赖 Core
 Zipper.Resources     — 资源管理器（Addressables 封装）                  依赖 Core
 Zipper.Audio         — 音频管理器                                      依赖 Core/Pool/Resources
@@ -74,7 +74,7 @@ Zipper.Editor        — 编辑器扩展、校验                               
 
 - 单向依赖：`Core → {Pool, Resources} → {Audio, UI}`；**`Pool` 与 `Resources` 互不依赖**——池只接收 `GameObject prefab`，不引用资源管理器类型；"按 address 建池 + 母本托管"由**上层组合器**（同时依赖两者）拼接（见 `docs/architecture/pool-manager-design.md` §5.4）；`ECS.Pool` 自成一体。
 - **asmdef 引用要求（v0.4 修订）**：
-  - `Zipper.Core`：**references 为空**（只依赖引擎）
+  - `Zipper.Core`：引用 **UniTask**（异步契约 `IZModuleBootstrap.InitializeAsync` 的返回类型需要）；此外不引 VContainer / Addressables / R3
   - 其余 Zipper.*：按各自需要显式引用（UniTask / VContainer / 官方包程序集）；`Zipper.Resources` 需引 **UniTask、Unity.Addressables、Unity.ResourceManager、UniTask.Addressables**（**asmdef 引用不传递**，缺一即编译期报类型不可见）
   - Post-v0.4 修订：原「所有 Zipper.* 都引 UniTask/VContainer」不再成立（Core 例外）
 
@@ -208,7 +208,7 @@ Assets/Zipper/
 | .unitypackage 与官方包边界 | Addressables/DOTS 只能作前置依赖 | 导入指引文档 + 干净工程验证（将来执行） |
 | 事件总线滥用 | 易演变为全局状态与隐式控制流 | 白名单/黑名单纪律（只做跨模块低频通知）+ 订阅凭据强制可释放 + 严格遵守"同一件事只发布一次"，见 Core 设计稿 §4.3 |
 | 总线与 R3 职责漂移 | 单实现后仍可能有人把节流/状态塞进总线，或为用操作符另起一条流 | 纪律：总线只做**路由**、R3 只做**加工**；需要操作符时在订阅侧用 R3 桥，不新增总线实现 |
-| Core 依赖偏差 | Core 不引 VContainer/UniTask，与旧版 §4.2 不同 | 已在本文件 v0.4 修订记录中说明 |
+| Core 依赖边界 | Core 引 **UniTask**（异步契约需要），但不引 VContainer / Addressables / R3 | v0.10 按实现修订：原文"零框架依赖"已更正；边界见 §4.1 原则 5 |
 | DOTS 版本兼容 | 版本细节未获权威背书 | M4 前以本机 Package Manager 解析为准 |
 | MVVM 复杂度失控 | 绑定层自研易过度设计 | MVP 边界硬约束（§5.3） |
 | 毕设时间假设 | 答辩是否 2027 年 4-6 月 | **待使用者确认** |
@@ -226,7 +226,8 @@ Assets/Zipper/
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
-| v0.9 | 2026-09-10 | 同步设计与实现进展：① §5.6 日志描述更新为 **v1 定案**（5 级 / caller 三件套 / 无模块枚举 / 无静态门面 / 放弃编译期剥离 / 文件按日期切分）；② §5.5 组装层改为 **总 Bootstrap + 各模块 Bootstrap（`IZModuleBootstrap` + `ZBootPhase`）**，机制见新文档 `docs/architecture/bootstrap-design.md`；③ §2 现状盘点（设计文档版本、池模块实现完成、Bootstrap 分层已落地）；④ 附录补全设计稿与本地教程清单 |
+| v0.10 | 2026-09-12 | **按实现修正 Core 的依赖边界**：`Zipper.Core` 引 **UniTask**（异步契约 `IZModuleBootstrap.InitializeAsync` 返回 `UniTask` 的必然结果），文中"零框架依赖 / references 为空"的表述统一改为"**仅依赖 UniTask**（不引 VContainer / Addressables / R3）"——涉及 §4.1 原则 5、§4.2 架构图与 asmdef 引用要求、§3 事件总线行、§9 风险表；并同步 §2 现状盘点（用户代码已提交：事件总线骨架、启动契约、日志模块、池模块、Bootstrapper 迁移、DI 接线） |
+| v0.9 | 2026-09-10 | 同步设计与实现进展（日志 v1 定案、组装层改总 Bootstrap、现状盘点、附录补全） |
 | v0.8 | 2026-09-10 | **更正对 R3 异常模型的描述**：R3 用 `OnErrorResume`（异常**不会**自动退订），故"用 R3 做总线必然因异常语义复制自研内核"的说法作废；«单实现 + R3 桥»结论不变，依据改为**路由**（R3 无"按类型全局登记订阅者"机制）。详见 `docs/architecture/core-design.md` v0.8 §4.3 |
 | v0.7 | 2026-09-10 | **事件总线由「双实现」收敛为「单实现 + R3 桥」（使用者决策）**：删除 `ZR3EventBus`；§2 现状盘点绑定层、§3 选型表事件总线行、§4.1（原则未变）、§5.6 基础设施、§9 风险表同步改写；新增风险行「总线与 R3 职责漂移」。决策依据见 `docs/architecture/core-design.md` §4.3（R3 无类型路由的全局注册表、用 R3 当总线仍要自建路由、桥比第二实现更小更强） |
 | v0.6 | 2026-09-06 | 事件总线命名统一框架约定（`IZEventBus` / `ZEventBus` / `ZR3EventBus`） |
@@ -237,4 +238,4 @@ Assets/Zipper/
 
 ## 审批记录
 
-- [ ] 使用者批准 v0.9（日期：____，意见：____）
+- [ ] 使用者批准 v0.10（日期：____，意见：____）

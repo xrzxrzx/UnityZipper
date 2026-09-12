@@ -1,6 +1,6 @@
 # Zipper.Core 设计 — 基础设施与日志系统
 
-> 状态：**v0.9 草稿，待审阅**
+> 状态：**v0.9.3 草稿，待审阅**
 > 定位：`docs/planning/technical-roadmap.md` §4.2 中 `Zipper.Core`（基础设施：日志、事件、扩展、公共工具）的展开设计稿。**只给设计思路与思路级伪代码，不含实现代码**。
 > **实施归属**：AI 只负责架构设计与思路级伪代码（供设计参考）；**代码实现由使用者完成**。依据：`docs/standards/agent-role.md`。
 > 已定范围（用户决策 2026-09-06）：日志 Sink = **Console + 文件输出**；Release **剥离 Info 及以下**；**支持运行时动态改级别**。
@@ -17,7 +17,7 @@
 | 依赖 | 是否允许 | 说明 |
 |---|---|---|
 | Unity 引擎 | ✅ 必须 | 日志走 Unity `Debug`、文件走 `Application.persistentDataPath` |
-| UniTask | ⚠️ 可选 | v1 **不引**：日志设计为同步门面 + 自建后台泵，不必依赖 UniTask |
+| UniTask | ✅ **必须** | 异步契约基础：`IZModuleBootstrap.InitializeAsync` 返回 `UniTask`（v0.9.3 修订——早期"v1 不引"的表述已作废） |
 | VContainer / Addressables / DOTween / R3 | ❌ 禁止 | 保持零框架耦合，装配由上层 `Zipper.Runtime` 负责 |
 
 > roadmap §4.2 写的是「所有 Zipper.* 运行时程序集需引用 UniTask / VContainer」——**Core 是例外**：它是最底层，引 DI 容器会反过来让所有模块被迫传递依赖，破坏"地基可独立裁剪"的目标。此处偏差建议记入 roadmap 修订项。
@@ -424,7 +424,7 @@ IZEventBus（接口，定义在 Zipper.Core —— 零依赖，任何层都能�
 
 > **命名约定**：品牌名 Zipper 取首字母 **Z** —— 框架对外的概念与入口用 `Z*` 前缀（`ZLog`、`ZEventBus`、`ZResourceManager`、`ZObjectPool`），接口用 `IZ*`（`IZLogger`、`IZEventBus`、`IZResourceManager`）；**内部机制类型不加前缀**（如句柄 `AssetHandle`/`PrefabAsset`）。详见 `docs/standards/naming-convention.md`。
 
-- **接口在 Core、R3 桥不在 Core**：Core 保持"零框架依赖"；若把 R3 相关代码塞进 Core，就等于 Core 被迫引 R3，地基原则破功。R3 只出现在**订阅侧的桥接程序集**。
+- **接口在 Core、R3 桥不在 Core**：Core 不引 R3（也不引 VContainer / Addressables）；若把 R3 相关代码塞进 Core，就等于 Core 被迫引 R3，地基原则破功。R3 只出现在**订阅侧的桥接程序集**。
 - **选择方式（v0.7 简化）**：容器只注册**一个** `IZEventBus → ZEventBus`（Scope 单例），不再需要"带 key 注册两条总线"。
 - **R3 在本框架的定位（使用者决策）**：**只负责 UI 方面的响应式流**（UI 绑定、面板与 ViewModel 之间的通知）；**事件路由统一走总线**，不承担第二套总线职责。
 
@@ -536,7 +536,7 @@ Assets/Zipper/Core/
 | 项 | 取值 | 说明 |
 |---|---|---|
 | name | `Zipper.Core` | 已存在 |
-| references | **空** | 只依赖引擎；不引 UniTask / VContainer / Addressables（§1 依赖原则） |
+| references | **UniTask** | 异步契约需要（`IZModuleBootstrap.InitializeAsync` 的 `UniTask` 返回类型）；不引 VContainer / Addressables / R3（§1 依赖原则） |
 | autoReferenced | true（默认） | 让 Assembly-CSharp（业务/DI 层）可直接使用 |
 | includePlatforms | 全平台 | 编辑器专用代码（如日志 Viewer）将来放 `Zipper.Editor` |
 | allowUnsafeCode | false | 无需 |
@@ -559,7 +559,7 @@ Scope 关闭 / 应用退出
 
 要点：
 - **初始化必须早于任何业务日志**（放在 `Configure` 之前更稳妥）。
-- **驱动对象**：不引 UniTask / VContainer 的前提下，用一个常驻不销毁的极简驱动对象每帧清空主线程队列；编辑器下需考虑 domain reload 后重建。
+- **驱动对象**：在 Core 不引 VContainer / Addressables / R3 的前提下，用一个常驻不销毁的极简驱动对象每帧清空主线程队列；编辑器下需考虑 domain reload 后重建。（本小节已被 `logging-design.md` v1.4 取代，保留作设计演进记录）
 - **退出不卡死**：后台线程 Join 设超时，超时即放弃剩余缓冲。
 
 ### 5.4 与 GameLifetimeScope 的接入关系
@@ -598,7 +598,7 @@ GameLifetimeScope（Assembly-CSharp，现状）
 | 单总线注册 | 容器只注册一个 `IZEventBus → ZEventBus`（Scope 单例） | 需在实现时随 VContainer 版本确认 Scope 单例写法 |
 | roadmap 偏差 | Core 不引 VContainer/UniTask 与 roadmap §4.2 冲突 | 记入 roadmap 修订项 |
 | 现有调用点替换 | Resources 的 Debug.LogWarning/TODO | 由使用者实现日志系统时统一替换 |
-| 主线程泵驱动方式 | 常驻驱动对象 vs 自定义 PlayerLoop 注入 vs 引 UniTask | v1 用常驻对象（Core 零依赖）；将来引 UniTask 再评估 |
+| 主线程泵驱动方式 | 常驻驱动对象 vs 自定义 PlayerLoop 注入 | v1 用常驻对象（**已定案**，详见 `logging-design.md` §6.3） |
 | 剥离符号粒度 | 单一符号还是按级别多符号 | v1 单符号（Editor/Development 定义）；需要更细再拆 |
 
 ---
@@ -607,7 +607,8 @@ GameLifetimeScope（Assembly-CSharp，现状）
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
-| v0.9.2 | 2026-09-10 | §3 顶部新增**变更声明**：日志模块 v1 形态迁移到 **`docs/architecture/logging-design.md`（v1.0）**——取消静态门面 `ZLog` 与双入口、取消 `ZLogModule`（改由 caller 体现来源）、级别由 6 级（含 Trace）改为 **5 级**、静态 `ZLogBootstrap` 改为实例 `ZLoggerBootstrap`、静态 `MainThreadPump` 改为实例 `ZMainThreadDispatcher`、放弃编译期剥离（改运行时过滤 + `IsEnabled` 前置判定）；§3.9–3.12 机制结论仍然有效 |
+| v0.9.3 | 2026-09-12 | **按实现修正 Core 依赖边界**（使用者决策：方案 a）：`Zipper.Core` 引 **UniTask** —— 因为异步契约 `IZModuleBootstrap.InitializeAsync` 返回 `UniTask`，这是必然依赖。§1 依赖原则表（UniTask 由"⚠️ 可选/不引"改为"✅ 必须"）、§4.3 R3 段（"零框架依赖"→"不引 R3/VContainer/Addressables"）、§5.2 asmdef 表（`references` 由"空"改为"UniTask"）、§3/§6 相关措辞与 §10 待决项同步；边界结论：**仅依赖 Unity + UniTask，不引 VContainer / Addressables / R3** |
+| v0.9.2 | 2026-09-10 | §3 顶部新增**变更声明**：日志模块 v1 形态迁移到 `logging-design.md`（v1.0） |
 | v0.9 | 2026-09-10 | **日志实现机制补详（使用者反馈"不知道怎么写"）**：新增 §3.8 编译期剥离（三层机制对比、`[Conditional]` 三条硬规则、符号来源表、**零配置推荐方案**、验证方法）、§3.9 多输出分发（广播 vs 规则式、"不需要路由表"、Sink 门槛与失败隔离）、§3.10 缓冲与刷盘（双触发、三层缓冲、级别感知刷盘、必须 flush 的四个时机、溢出策略与"日志撒谎"警示）、§3.11 并发模型（生产者-消费者三段结构、七条纪律、何时才需零分配方案）、§3.12 与 Serilog 概念对照表。配套**本地实现教程**（含示例代码，不入库）：`LocalNotes/logging-implementation-guide.md` |
 | v0.8 | 2026-09-10 | **更正 §4.3「不做 R3 版总线」的依据 2（事实性修订）**：原措辞称"Rx `OnError` 终止整条流"据此推出"R3 版必然复制自研内核"——但 **R3 1.3.1 官方 README 明确：R3 用 `OnErrorResume`，异常不会自动退订**，故该前提对 R3 不成立。修订为：不做 R3 版总线的真正理由是**路由**（R3 无"按事件类型全局登记订阅者"机制，`Subject<T>` 是命名实例，仍需人工传递 = 自建路由）；新增"R3 异常模型"澄清段；依据 1–5 结论不变。连带更正 R3 桥设计要点的"异常语义"与 §6「桥的异常边界」待办（桥后链异常不终止链，建议把 `RegisterUnhandledExceptionHandler` 接到框架日志系统） |
 | v0.7 | 2026-09-10 | **事件总线由「双实现」改为「单实现 + R3 桥」（使用者决策）**：删除 `ZR3EventBus`（不再做第二条总线实现），改为在依赖 R3 的桥接程序集提供 `AsObservable` 扩展把总线订阅桥接成 R3 可观察对象；§4.3 新增五条「为什么不做 R3 版总线」决策依据（职能不重叠／内核必然复制／成本在纪律／桥更小更强／地基分层）；「实现选择与归属纪律」表重写（UI 通知回归总线，新增"桥上加工"一行，纪律改为"同一件事只发布一次"）；「带 key 注册两条总线」相关表述与 §6 待办（R3 实现归属、双实现一致性、带 key 注册）一并更新为桥归属／桥异常边界／单总线注册 |
