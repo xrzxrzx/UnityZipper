@@ -1,3 +1,16 @@
 {
-	"name": "Zipper.Pool"
+    "name": "Zipper.Pool",
+    "rootNamespace": "",
+    "references": [
+        "GUID:d82f8c7a63a99364b80e1e09e0fc95a6"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
 }

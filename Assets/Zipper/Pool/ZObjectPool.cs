@@ -1,5 +1,8 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
+
+using Zipper.Core.Logging;
 
 namespace Zipper.Pool
 {
@@ -9,19 +12,18 @@ namespace Zipper.Pool
     /// 触发逻辑：先调用对象的OnXXX方法，再调用委托方法。
     /// </summary>
     /// <typeparam name="T"></typeparam>
-    public class ZObjectPool<T> where T : Component, IZObjectPoolItem
+    public class ZObjectPool<T> : ZObjectPoolBase where T : Component, IZObjectPoolItem
     {
-        public delegate void InitializeActionDelegate(T item);
-        public delegate void GetActionDelegate(T item);
-        public delegate void ReturnActionDelegate(T item);
-        public delegate void ClearActionDelegate(T item);
+        IZLogger _logger;
 
-        InitializeActionDelegate InitializeAction;
-        GetActionDelegate GetAction;
-        ReturnActionDelegate ReturnAction;
-        ClearActionDelegate ClearAction;
+        readonly Action<T> _onInitialize;
+        readonly Action<T> _onGet;
+        readonly Action<T> _onReturn;
+        readonly Action<T> _onClear;
 
         GameObject prefab;
+        public override GameObject Prefab => prefab;
+
         Queue<T> items;
         HashSet<T> inactiveItems;
         HashSet<T> allItems;
@@ -29,52 +31,59 @@ namespace Zipper.Pool
         int maxSize;
         int totalCount;
 
-        public int CountInactive => items.Count;
-        public int CountAll => totalCount;
-        public int CountActive => totalCount - items.Count;
+        public override int CountInactive => items.Count;
+        public override int CountAll => totalCount;
+        public override int CountActive => totalCount - items.Count;
 
-        public ZObjectPool(GameObject prefab, int initialSize = 0, int maxSize = 0, InitializeActionDelegate initializeAction = null, GetActionDelegate getAction = null, ReturnActionDelegate returnAction = null, ClearActionDelegate clearAction = null)
+        internal ZObjectPool(in ZPoolOptions<T> options, IZLogger logger)
         {
+            _logger = logger;
+
             #region 健壮性检查
-            if (prefab == null)
+            if (options.Prefab == null)
             {
-                throw new System.ArgumentNullException(nameof(prefab));
+                _logger.Fatal("对象池：预制体不能为空", new ArgumentNullException(nameof(options.Prefab)));
+                return;
             }
 
-            if (prefab.GetComponent<T>() == null)
+            if (options.Prefab.GetComponent<T>() == null)
             {
-                throw new System.Exception($"对象池：预制体 {prefab.name} 缺少组件 {typeof(T).Name}");
+                _logger.Fatal($"对象池：预制体 {options.Prefab.name} 缺少组件 {typeof(T).Name}");
+                return;
             }
 
-            if (initialSize < 0)
+            if (options.InitialSize < 0)
             {
-                throw new System.ArgumentOutOfRangeException(nameof(initialSize));
+                _logger.Fatal("对象池：InitialSize 不能为负数", new ArgumentOutOfRangeException(nameof(options.InitialSize)));
+                return;
             }
 
-            if (maxSize < 0)
+            if (options.MaxSize < 0)
             {
-                throw new System.ArgumentOutOfRangeException(nameof(maxSize));
+                _logger.Fatal("对象池：MaxSize 不能为负数", new ArgumentOutOfRangeException(nameof(options.MaxSize)));
+                return;
             }
 
-            if (maxSize > 0 && initialSize > maxSize)
+            if (options.MaxSize > 0 && options.InitialSize > options.MaxSize)
             {
-                throw new System.ArgumentException("initialSize 不能大于 maxSize");
+                _logger.Fatal("对象池：InitialSize 不能大于 MaxSize", new ArgumentException("InitialSize 不能大于 MaxSize"));
+                return;
             }
             #endregion
 
-            this.prefab = prefab;
-            this.maxSize = maxSize;
-            InitializeAction = initializeAction;
-            GetAction = getAction;
-            ReturnAction = returnAction;
-            ClearAction = clearAction;
+            this.prefab = options.Prefab;
+            this.maxSize = options.MaxSize;
+            _onInitialize = options.OnInitialize;
+            _onGet = options.OnGet;
+            _onReturn = options.OnReturn;
+            _onClear = options.OnClear;
 
-            items = new Queue<T>(initialSize);
-            inactiveItems = new HashSet<T>(initialSize);
-            allItems = new HashSet<T>(initialSize);
-            clearPendingItems = new HashSet<T>(initialSize);
+            items = new Queue<T>(options.InitialSize);
+            inactiveItems = new HashSet<T>(options.InitialSize);
+            allItems = new HashSet<T>(options.InitialSize);
+            clearPendingItems = new HashSet<T>(options.InitialSize);
 
-            InitializeItems(initialSize);
+            InitializeItems(options.InitialSize);
         }
 
         private void InitializeItems(int initialSize)
@@ -92,7 +101,8 @@ namespace Zipper.Pool
             var tItem = item as T;
             if (tItem == null)
             {
-                throw new System.InvalidCastException($"对象池：归还对象类型不匹配，期望 {typeof(T).Name}");
+                _logger.Error($"对象池：归还对象类型不匹配，期望 {typeof(T).Name}", new InvalidCastException($"对象池：归还对象类型不匹配，期望 {typeof(T).Name}"));
+                return;
             }
 
             if (inactiveItems.Contains(tItem))
@@ -102,11 +112,12 @@ namespace Zipper.Pool
 
             if (!allItems.Contains(tItem))
             {
-                throw new System.InvalidOperationException($"对象池：对象 {tItem.name} 不属于当前对象池");
+                _logger.Error($"对象池：对象 {tItem.name} 不属于当前对象池", new InvalidOperationException($"对象池：对象 {tItem.name} 不属于当前对象池"));
+                return;
             }
 
             tItem.OnReturn();
-            ReturnAction?.Invoke(tItem);
+            _onReturn?.Invoke(tItem);
 
             // 如果对象正在等待清理，则直接清理
             if (clearPendingItems.Remove(tItem))
@@ -121,11 +132,11 @@ namespace Zipper.Pool
 
         private T NewItem()
         {
-            var item = Object.Instantiate(prefab).GetComponent<T>();
+            var item = UnityEngine.Object.Instantiate(Prefab).GetComponent<T>();
             item.ReturnToPool = ReturnItemToPool;
 
             item.OnInitialize();
-            InitializeAction?.Invoke(item);
+            _onInitialize?.Invoke(item);
             allItems.Add(item);
             totalCount++;
 
@@ -144,14 +155,15 @@ namespace Zipper.Pool
             {
                 if (maxSize > 0 && totalCount >= maxSize)
                 {
-                    throw new System.InvalidOperationException($"对象池：已达到最大容量 {maxSize}");
+                    _logger.Error($"对象池：已达到最大容量 {maxSize}", new InvalidOperationException($"对象池：已达到最大容量 {maxSize}"));
+                    return default;
                 }
 
                 item = NewItem();
             }
 
             item.OnGet();
-            GetAction?.Invoke(item);
+            _onGet?.Invoke(item);
 
             return item;
         }
@@ -166,15 +178,19 @@ namespace Zipper.Pool
 
         public void GetItemsByCount(int count, List<T> result)
         {
+            #region 健壮性检查
             if (count < 0)
             {
-                throw new System.ArgumentOutOfRangeException(nameof(count));
+                _logger.Fatal("对象池：count 不能为负数", new ArgumentOutOfRangeException(nameof(count)));
+                return;
             }
 
             if (result == null)
             {
-                throw new System.ArgumentNullException(nameof(result));
+                _logger.Fatal("对象池：result 不能为 null", new ArgumentNullException(nameof(result)));
+                return;
             }
+            #endregion
 
             result.Clear();
             for (int i = 0; i < count; i++)
@@ -183,7 +199,7 @@ namespace Zipper.Pool
             }
         }
 
-        public void Clear()
+        public override void Clear()
         {
             clearPendingItems.Clear();
             clearPendingItems.UnionWith(allItems);
@@ -201,12 +217,21 @@ namespace Zipper.Pool
         private void ClearItem(T item)
         {
             item.OnClear();
-            ClearAction?.Invoke(item);
+            _onClear?.Invoke(item);
 
             allItems.Remove(item);
-            Object.Destroy(item.gameObject);
+            UnityEngine.Object.Destroy(item.gameObject);
 
             totalCount--;
+        }
+
+        public override void Dispose()
+        {
+            Clear();
+            items.Clear();
+            inactiveItems.Clear();
+            allItems.Clear();
+            clearPendingItems.Clear();
         }
     }
 }
