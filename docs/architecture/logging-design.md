@@ -187,6 +187,18 @@ public interface IZModuleBootstrap
 - 统一 `UniTask` + `CancellationToken`（roadmap 已定：对外异步一律 UniTask）
 - 失败策略：**抛异常 → 启动失败**（可见、可定位）；若某模块允许降级，由该模块自行 catch 并记录（例如文件 Sink 不可用 → 降级为仅 Console）
 
+**`InitializeAsync(CancellationToken ct)` 的 ct 从哪来（补充说明）**：
+
+| 来源 | 何时用 |
+|---|---|
+| **VContainer 注入的 Scope 取消令牌**（`IAsyncStartable.StartAsync(ct)` 由容器传入，Scope 销毁即取消） | ✅ **默认路径**：总 Bootstrap 收到后**一路透传**给各模块，**不需要自己创建** |
+| `default` / `CancellationToken.None` | 调用方无取消需求时（零成本、无分配） |
+| **自己创建 `CancellationTokenSource`** | 仅两种场景：① **超时**——`CreateLinkedTokenSource(ct)` + `CancelAfter(...)`（**必须链接上游 ct**，用完 `using`/`Dispose`）；② **主动取消**（用户取消 / 切场景）——由**发起取消的一方**持有，`Cancel()` + `Dispose()` |
+
+**三个反模式**：接收方在方法内部 `new CancellationTokenSource()`（无意义且易泄漏）；创建了不 `Dispose`；拿到 ct 却不检查（`ThrowIfCancellationRequested`）也不透传给下游 async API。
+
+**日志模块的两点注意**：① 初始化几乎不等待（建 Sink / 开文件 / 创建驱动对象），ct 实际可能用不上，但**接口保留 ct 是框架统一约定**；② ⚠️ **收尾不得绑 ct**——`ZLoggerBootstrap.Dispose()` 的 Flush 与"停后台线程"必须走**不依赖 ct** 的路径，否则 Scope 取消时线程被中断、**尾部日志丢失**。
+
 ### 5.3 总 Bootstrap（`ZipperBootstrapper`）：**阶段顺序显式写在代码里**
 
 ```
