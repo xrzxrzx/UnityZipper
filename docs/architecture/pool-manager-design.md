@@ -330,6 +330,17 @@ ZPoolOptions<T>  where T : Component, IZObjectPoolItem
 
 > 用 BCL 的 `Action<T>` 代替原来的 4 个自定义 delegate 类型（`ZObjectPool<T>.XXXDelegate` 可删）。
 
+**`Overflow` 字段是什么**：它是"池**借空且已达 `MaxSize`** 时怎么办"的策略开关（对应你代码里标 TODO 的那处写死的 `throw`）。
+
+| 取值 | 行为 | 何时用 |
+|---|---|---|
+| `Throw` | 抛异常（**默认——保持你现有行为不变**） | 调用方理应为"池不够用"做准备 |
+| `ReturnNull` | 返回 null，由调用方降级 | 例如"这一帧不再生成敌人" |
+| `Expand` | 忽略 `MaxSize` 继续新建 | 想让 `MaxSize` 只当"软上限" |
+
+> 写法说明：`public ZPoolOverflowPolicy Overflow = ZPoolOverflowPolicy.Throw;` 就是"**声明字段 + 在声明处给默认值**"（字段初始化器，等价于在构造函数里赋值；构造函数里再赋值会覆盖它）。
+> **不需要策略化就删掉它**：连同枚举一起删、池里保持 `throw` 即可，不影响本附录其它内容。
+
 **池构造**：`internal ZObjectPool<T>(in ZPoolOptions<T> options)`
 - ⚠ **必须把 options 的值拷进池的私有字段**，不要持有 options 引用
   （否则调用方建池后再改 options，会改变运行中池的行为——极难排查）
