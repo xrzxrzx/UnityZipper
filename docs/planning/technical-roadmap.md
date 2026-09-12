@@ -136,10 +136,19 @@ Assets/Zipper/
 - 设计要点：按 Archetype 批量预分配；空闲实体入 NativeQueue（防重复入池）；池系统与使用侧系统分离；热路径 Burst+Job；池统计。
 - 验收标准：万级实体稳定；与普通池性能对比数据；Burst 编译通过。
 
-### 5.5 组装层（Zipper.Runtime）
+### 5.5 组装层（分阶段，v0.8 明确）
 
-- VContainer Scope 注册全部 Manager / ViewModel / 池；async 生命周期（`IAsyncStartable` 等）与 CancellationToken 注入；包内"一键引导"组件；场景切换策略由 Scope 层级控制。
-- **现状**：`GameLifetimeScope` 已注册 `IZResourceManager→ZResourceManager`（单例）与 `ResourcesBootstrapper`（入口点）；日志系统初始化将来在此接入。
+**本质**：组装层 = **把模块注册进容器 + 一个启动入口**，不是新框架、没有新概念。
+
+| 阶段 | 做什么 | 状态 |
+|---|---|---|
+| **v1（现在）** | 用现有 `GameLifetimeScope` 直接充当组装层：注册 `IZLogger` / `IZEventBus` / `IZResourceManager` / `IZObjectPoolManager`（均为 Singleton）+ 启动时初始化日志系统 + 注册 `ResourcesBootstrapper` 入口点 | 多数已完成，差池管理器一行与日志初始化调用 |
+| **按需** | **组合器**（按 address 建池 + 母本托管：加载 → 建池 → 销毁时先清池再释放母本）——只要出现"用地址建池"的需求就写，约 20~30 行；位置放一处（业务侧统一服务），避免顺序纪律散落 | 未做（可选） |
+| **延后** | 独立 `Zipper.Runtime` 程序集 + asmdef（DI 在 Assembly-CSharp 可用，**等分发时再考虑**）；"一键引导"组件；场景 / 子 Scope 层级策略 | 明确延后 |
+
+- **跳过这些不会缺功能**：单场景毕设 Demo 不需要子 Scope 层级；模块少时 `GameLifetimeScope` 自己就是引导。
+- **唯一代价**：不做组合器时，"母本托管 + 先清池再释放母本"的顺序纪律要自己守 → 建议把这段编排**收敛在一处**（别散落多个脚本）。
+- 依赖注入、async 生命周期（`IAsyncStartable` 等）与 CancellationToken 注入按官方用法使用；将来若引入 UI/音频管理器，再评估是否需要独立程序集。
 
 ### 5.6 基础设施（Zipper.Core）— v0.4 新增
 
