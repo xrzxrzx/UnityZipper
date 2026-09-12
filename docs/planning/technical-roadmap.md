@@ -18,7 +18,7 @@
 
 | 项 | 现状 | 影响 |
 |---|---|---|
-| Unity 版本 | 2022.3.62f2c1（LTS） | 支持 Entities 1.0.x、Addressables 1.x |
+| Unity 版本 | 2022.3.62f2c1（LTS）；**C# 语言版本 = 9.0**（实测 `-langversion:9.0`，Unity 固定不可改）；API 档 = .NET Standard 2.1 | 支持 Entities 1.0.x、Addressables 1.x；**C# 10/11/12 语法一律不可用**（file-scoped namespace、global using、record struct、raw string、collection expression 等）；`record`/`init` 需自建 `IsExternalInit` shim |
 | 渲染管线 | URP 14.0.12 | 无特殊限制 |
 | UI | uGUI 1.0.0 + TextMeshPro 3.0.7 | UI 方案定为 uGUI |
 | DI | VContainer 1.19.0（UPM 包，位于 Packages/） | 容器装配可用；是否 vendor 随分发决策（暂缓） |
