@@ -113,10 +113,20 @@ Get<T>(PoolKey key = default)
 | 归还（便利入口） | `void Return<T>(T item)` | 与池注入的 `Item.ReturnToPool` 是**两条路径**（都落到池的 `ReturnItemToPool`，重复归还由池的 inactive 检查兜住）；管理器入口便于调用方不必持有委托 |
 | 统计 | `ZPoolsState GetPoolsState()` | **聚合快照** DTO：池数量 + 各池 `total/active/inactive` + 汇总（实现现状采用此形态，优于按类型单查）。若将来需要单池实时查询，可另加 `TryGetStats<T>` |
 | 全部清理 | `void Dispose()`（建议 `IZObjectPoolManager : IDisposable`） | Scope 关闭：遍历销毁全部池（实例回收）+ 清空登记。**基类已有 `Dispose`，管理器必须暴露入口** |
+| **按类型操作（编辑器/监视器用）** | `void ClearPool(Type itemType)` / `void DestroyPool(Type itemType)` | **非泛型入口**：内部直接走基类的 `Clear()` / `Dispose()`（本来就是非泛型方法）→ **零反射、零 AOT 风险**。编辑器面板"点一下清空某个池"不需要 `MakeGenericMethod` |
 | 主线程约定 | 注释声明 | 所有成员仅主线程调用 |
 
-**两个必须收敛的细节**：
+**编辑器 / 运行期监视器的数据模型（v0.2.6 补充）**
 
+| 要点 | 说明 |
+|---|---|
+| **监视器只吃 DTO** | 遍历 `ZPoolsState.PoolStates` 即可拿到每个池的**类型**与计数：`ZPoolState.Type` / `TotalItems` / `ActiveItems` / `InactiveItems` |
+| **不要把内部字典交出去** | `Dictionary<Type, ZObjectPoolBase>` 里的 `ZObjectPoolBase` 是 `internal`：监视器若在其它程序集（如未来的 `Zipper.Editor`）**根本看不到这个类型**（除非 `InternalsVisibleTo`）；而且拿到基类引用等于给监视器 `Clear/Dispose` 的操作能力——**调试面板应当只读** |
+| **只读原则** | DTO 只携带"数据快照"；要操作就走管理器的公开方法（泛型入口给代码用、**按 `Type` 的非泛型入口给编辑器/监视器用**） |
+| 可选增强 | `ZPoolState` 可再加 `GameObject Prefab`（基类已有 `Prefab` 属性，直接透出）与 `int MaxSize`（基类加一个只读属性，池内已有字段）——池面板最常显示"上限 / 已用 / 空闲" |
+| 数据新鲜度 | `GetPoolsState()` 每次返回**新快照**（构造时聚合）；监视器按需轮询即可，无需订阅 |
+
+**两个必须收敛的细节**：
 1. **委托类型的归宿（v0.2.1 澄清）**：`InitializeActionDelegate` 这类委托**参数是 `T`**，因此**不能放进非泛型 `ZObjectPoolBase`**（放进去只能改参数为 `IZObjectPoolItem`，业务回调被迫 `as` 转型、注册处就丢类型信息）。三选一：**(a)** 留在 `ZObjectPool<T>` 内（现状，但会让管理器接口引用具体类、4 个同类型参数易错序）；**(b)** 换成 BCL 的 `Action<T>`（少 4 个自定义类型，但相邻同类型参数仍易混）；**(c)** **收进 `ZPoolOptions<T>`（推荐）**——接口干净、字段有名、以后加配置不改签名；内部仍可用 `Action<T>`。委托本身无装箱问题（`Action<T>` 是引用类型，lambda 编译期缓存为静态委托，无每帧分配）。
 2. **超限策略要可配**（对应你代码里的 TODO）：现在 maxSize 到顶就 `throw`——"太激进"（你的原话）。建议 `ZPoolOverflowPolicy { Throw, ReturnNull, Expand }`：`Throw` 保持现状 / `ReturnNull` 让调用方降级（这一帧不再生成）/ `Expand` 忽略 maxSize。**默认值待你定**（§10）。
 
@@ -398,6 +408,7 @@ poolManager.CreatePool<EnemyView>(options);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.2.6 | 2026-09-10 | §4 补充**编辑器/运行期监视器**支持：① 数据模型——监视器遍历 `ZPoolsState.PoolStates` 取 `ZPoolState.Type` 与计数即可，**不要把内部字典交出去**（`ZObjectPoolBase` 为 `internal`，跨程序集看不到；且会赋予监视器操作能力，违背只读原则）；② 新增**非泛型操作入口** `ClearPool(Type)` / `DestroyPool(Type)`（内部走基类 `Clear()`/`Dispose()`，**零反射、零 AOT 风险**，避免 `MakeGenericMethod`）；③ 可选增强 `ZPoolState.Prefab` / `MaxSize` |
 | v0.2.5 | 2026-09-10 | §3.2 补充 **`T` 必须是具体组件类型**：`typeof(T)` 取编译期静态类型（非运行时 `GetType()`），用基类/接口当 `T` 会导致 `CreatePool` 与 `Get` 的 key 不一致、且 `GetComponent<T>()` 拦不住；建议在 `CreatePool<T>` 校验 `IsAbstract`/`IsInterface` 抛参数异常。同时记录 **AOT 结论**：`typeof(T)` 在 IL2CPP 下安全（无反射、类型不会被 strip），需 `link.xml` 的只有运行时反射构造泛型/字符串反射（本设计未用） |
 | v0.2.4 | 2026-09-10 | 按使用者实现现状同步 + 评审结论：§4 统计改为 **`ZPoolsState GetPoolsState()`**（聚合快照 DTO，比原 `TryGetStats<T>` 更好用）、新增 **`Return<T>(T item)`** 便利归还入口（与 `Item.ReturnToPool` 两条路径并存）；§5.1 明确**存储 key 用 `typeof(T)`**（与接口寻址一致，否则 `Get<T>()` 只能遍历）与"DTO 不收内部字典类型"；§9 待使用者的三处修改：`GetItemsByCount<T>` **补泛型约束**、`IZObjectPoolManager` **补 `IDisposable`**、内部存储 key 与接口对齐 |
 | v0.2.3 | 2026-09-10 | 新增 §5.2「**基类不要设计成"空对象"**」：空基类只解决"存/取转型"，**解决不了管理器统一清理**（遍历时 `T` 未知，无法调 `ZObjectPool<T>.Clear()`）；给出最小成员集（`Clear` 必须 + `Count*` 推荐 + `Prefab` 可选），并指出改造量几乎为零（池里已有这些成员）；提示基类命名口径（`ObjectPoolBase` vs `ZObjectPoolBase`）由使用者定。§5 编号顺延（→ 5.1–5.5）并同步全文引用 |
