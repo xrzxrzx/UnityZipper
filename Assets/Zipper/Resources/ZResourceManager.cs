@@ -1,6 +1,7 @@
 using Cysharp.Threading.Tasks;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
@@ -42,7 +43,7 @@ namespace Zipper.Resources
         /// <param name="ct"></param>
         /// <returns></returns>
         /// <exception cref="System.ArgumentNullException"></exception>
-        public async UniTask<AssetHandle<T>> LoadAssetAsync<T>(string address, string owner = "", CancellationToken ct = default)
+        public async UniTask<AssetHandle<T>> LoadAssetAsync<T>(string address, [CallerMemberName]string owner = "", CancellationToken ct = default)
         {
             if(string.IsNullOrEmpty(address))
                 throw new System.ArgumentNullException(nameof(address));
