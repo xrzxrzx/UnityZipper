@@ -291,10 +291,65 @@ TryGetStats<T>(out stats)：
 
 ---
 
-## 11. 变更记录
+## 附录 A：`ZPoolOptions<T>` 形态示意（v0.2.2）
+
+> 仅**形态示意**（字段与签名），非实现代码。用于落实 §4 细节 1 的"方案 c + BCL `Action<T>`"。
+
+**配置对象**（class；约束与池一致）：
+
+```
+ZPoolOptions<T>  where T : Component, IZObjectPoolItem
+  Prefab        : GameObject        // 必填：池的来源
+  InitialSize   : int               // 默认 0
+  MaxSize       : int               // 默认 0 = 不限
+  Overflow      : ZPoolOverflowPolicy（Throw / ReturnNull / Expand）
+  OnInitialize  : Action<T>         // 可选
+  OnGet         : Action<T>         // 可选
+  OnReturn      : Action<T>         // 可选
+  OnClear       : Action<T>         // 可选
+```
+
+> 用 BCL 的 `Action<T>` 代替原来的 4 个自定义 delegate 类型（`ZObjectPool<T>.XXXDelegate` 可删）。
+
+**池构造**：`internal ZObjectPool<T>(in ZPoolOptions<T> options)`
+- ⚠ **必须把 options 的值拷进池的私有字段**，不要持有 options 引用
+  （否则调用方建池后再改 options，会改变运行中池的行为——极难排查）
+
+**调用时机**（沿用既有约定：先接口方法、后委托）：
+
+| 时机 | 顺序 |
+|---|---|
+| `NewItem` | `OnInitialize()` → `_onInitialize?.Invoke(item)` |
+| `GetItem` | `OnGet()` → `_onGet?.Invoke(item)` |
+| 归还 | `OnReturn()` → `_onReturn?.Invoke(item)` |
+| 清理 | `OnClear()` → `_onClear?.Invoke(item)` |
+
+**管理器接口**：`void CreatePool<T>(in ZPoolOptions<T> options) where T : Component, IZObjectPoolItem;`
+
+**调用方写法**（对象初始化器：字段有名、顺序无关）：
+
+```
+var options = new ZPoolOptions<EnemyView> {
+    Prefab = prefab, InitialSize = 8, MaxSize = 32,
+    OnGet = v => v.gameObject.SetActive(true),
+    OnReturn = v => v.gameObject.SetActive(false) };
+poolManager.CreatePool<EnemyView>(options);
+```
+
+**易错细节**：
+1. 拷贝而非持有 options（见上）
+2. 三处泛型约束必须一致（options / 池 / 接口方法）
+3. `in` 只对 struct 有意义；options 是 class 时传引用即可
+4. **别用 `required` / `init`**（C# 11 / 需 `IsExternalInit` shim）——用普通可写字段最省事
+5. 校验仍在池构造内（options 只是搬运工）
+
+---
+
+## 变更记录（原 §11）
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.2.2 | 2026-09-10 | 新增**附录 A：`ZPoolOptions<T>` 形态示意**——落实 §4 细节 1 的"方案 c + BCL `Action<T>`"：配置对象字段清单、池构造收 options、**必须拷贝值（不持有引用）**、四个调用时机、管理器接口签名、调用方对象初始化器写法、5 条易错细节 |
 | v0.2.1 | 2026-09-10 | 澄清两个实现疑问：① 新增 §5.4「转型会不会装箱」——**基类↔派生/接口↔class 都是引用转换，无装箱无分配**（装箱只发生在值类型→object/接口，而 `T : Component` 必为 class）；② §4 细节 1 改写为"委托类型的归宿"三方案对比（**推荐收进 `ZPoolOptions<T>`**；**不能放进非泛型基类**，因委托参数是 `T`） |
 | v0.2 | 2026-09-10 | **使用者纠正**：撤销"`CreatePoolAsync(address)` + 池管理器托管母本"设计——**池管理器只接收 `GameObject prefab`，不碰资源句柄、不依赖 `Zipper.Resources`**；新增 §5.3「按 address 建池 + 母本托管放上层组合器」（含伪代码与顺序纪律归属）；§1/§2/§4/§5/§6/§7/§8/§9/§10 全面改写；删除"依赖方向待决"（已定：Pool 与 Resources 互不依赖） |
 | v0.1 | 2026-09-10 | 初稿：基于使用者 `IZObjectPoolManager` 初稿的评审定稿——一类型一池 / 全程用 `T` 寻址 / 泛型存储 / 接口收敛 / 十条雷区 / 验收与差异清单 |
