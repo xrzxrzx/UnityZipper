@@ -263,6 +263,8 @@ ZResourceManager（Scope 内单例）
    ⚠ 母本释放后其 AssetBundle 可能被卸载：池内实例引用的子资源会 Missing，再扩容也实例化不出来
 
 不打算池化、用完即毁的对象 → 走 F4，不要"先加载母本再克隆"（母本句柄会一直悬着）
+
+> **推荐做法**：母本的加载与释放**交给对象池管理器托管**（`CreatePoolAsync<T>(address, …)` → 内部加载母本并持有；`DestroyPool<T>()` → 内部固定"先清池再释放母本"）。这样上面的顺序纪律由管理器保证，调用方没有机会写错。详见 `docs/architecture/pool-manager-design.md`。
 ```
 
 #### F4 一次性实例化
