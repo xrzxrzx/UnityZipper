@@ -73,6 +73,19 @@
 | **同一 `T` 重复 `CreatePool<T>` → 抛异常**（不静默覆盖） | 静默覆盖会**丢失旧池**：旧实例散落场景、无人归还、也不会被销毁 → 泄漏 + 幽灵对象 |
 | 注释写明"**仅主线程**、**一类型一池**、**只接收 GameObject（不持有资源句柄）**" | 约束前置 |
 
+**`T` 必须是"具体组件类型"（v0.2.5 补充）**：key 是 `typeof(T)`，而 `typeof(T)` 取的是**编译期静态类型**（不是运行时 `GetType()` 的最子类型）。因此：
+
+| 调用 | 实际 key |
+|---|---|
+| `Get<EnemyView>(enemyView)` | `EnemyView` ✓ |
+| `Component c = enemyView; Get(c)`（推断为 `Component`） | `Component` ⚠️ 与 `EnemyView` 的池对不上 |
+| `CreatePool<IZObjectPoolItem>(…)` | `IZObjectPoolItem`（接口）⚠️ |
+
+→ **`CreatePool<T>` 与后续 `Get<T>`/`DestroyPool<T>` 必须传同一个具体类型**，不能用基类/接口顶替。
+→ 注意 `prefab.GetComponent<T>()` **拦不住**这种误用（`GetComponent<Component>()` 也能成功）。**建议加固**：`CreatePool<T>` 里校验 `typeof(T).IsAbstract || typeof(T).IsInterface` → 抛参数异常，让错误在建池时就暴露。
+
+> **AOT 相关**：`typeof(T)` 在 IL2CPP 下**安全**（编译期类型句柄，无反射、不影响剥离；被 `typeof` 引用的类型反而不会被 strip）。真正需要 `link.xml`/`Preserve` 的是**运行时反射构造泛型**（`MakeGenericType`/`MakeGenericMethod`）或字符串反射（`Type.GetType("…")`）——本设计**均未使用**。
+
 ### 3.3 演进路径（v2 再议，现在不做）
 
 若真需要"一类型多池"（精英兵池/普通兵池共用 `EnemyView`），必须引入**显式 key**：
@@ -385,6 +398,7 @@ poolManager.CreatePool<EnemyView>(options);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.2.5 | 2026-09-10 | §3.2 补充 **`T` 必须是具体组件类型**：`typeof(T)` 取编译期静态类型（非运行时 `GetType()`），用基类/接口当 `T` 会导致 `CreatePool` 与 `Get` 的 key 不一致、且 `GetComponent<T>()` 拦不住；建议在 `CreatePool<T>` 校验 `IsAbstract`/`IsInterface` 抛参数异常。同时记录 **AOT 结论**：`typeof(T)` 在 IL2CPP 下安全（无反射、类型不会被 strip），需 `link.xml` 的只有运行时反射构造泛型/字符串反射（本设计未用） |
 | v0.2.4 | 2026-09-10 | 按使用者实现现状同步 + 评审结论：§4 统计改为 **`ZPoolsState GetPoolsState()`**（聚合快照 DTO，比原 `TryGetStats<T>` 更好用）、新增 **`Return<T>(T item)`** 便利归还入口（与 `Item.ReturnToPool` 两条路径并存）；§5.1 明确**存储 key 用 `typeof(T)`**（与接口寻址一致，否则 `Get<T>()` 只能遍历）与"DTO 不收内部字典类型"；§9 待使用者的三处修改：`GetItemsByCount<T>` **补泛型约束**、`IZObjectPoolManager` **补 `IDisposable`**、内部存储 key 与接口对齐 |
 | v0.2.3 | 2026-09-10 | 新增 §5.2「**基类不要设计成"空对象"**」：空基类只解决"存/取转型"，**解决不了管理器统一清理**（遍历时 `T` 未知，无法调 `ZObjectPool<T>.Clear()`）；给出最小成员集（`Clear` 必须 + `Count*` 推荐 + `Prefab` 可选），并指出改造量几乎为零（池里已有这些成员）；提示基类命名口径（`ObjectPoolBase` vs `ZObjectPoolBase`）由使用者定。§5 编号顺延（→ 5.1–5.5）并同步全文引用 |
 | v0.2.2 | 2026-09-10 | 新增**附录 A：`ZPoolOptions<T>` 形态示意**——落实 §4 细节 1 的"方案 c + BCL `Action<T>`"：配置对象字段清单、池构造收 options、**必须拷贝值（不持有引用）**、四个调用时机、管理器接口签名、调用方对象初始化器写法、5 条易错细节 |
