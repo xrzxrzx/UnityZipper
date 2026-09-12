@@ -264,7 +264,7 @@ ZResourceManager（Scope 内单例）
 
 不打算池化、用完即毁的对象 → 走 F4，不要"先加载母本再克隆"（母本句柄会一直悬着）
 
-> **推荐做法**：母本的加载与释放**交给对象池管理器托管**（`CreatePoolAsync<T>(address, …)` → 内部加载母本并持有；`DestroyPool<T>()` → 内部固定"先清池再释放母本"）。这样上面的顺序纪律由管理器保证，调用方没有机会写错。详见 `docs/architecture/pool-manager-design.md`。
+> **推荐做法**：把"加载母本 → 建池 → 销毁时先清池再释放母本"这组编排**收敛到一个上层组合器**（同时依赖资源管理器与对象池管理器，见 `docs/architecture/pool-manager-design.md` §5.3）。池管理器**只接收 `GameObject prefab`**，因此不依赖资源管理器；顺序纪律由组合器保证，避免每个业务点各写一遍、各写错一遍。
 ```
 
 #### F4 一次性实例化
