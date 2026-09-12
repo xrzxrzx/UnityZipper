@@ -260,7 +260,22 @@ builder.RegisterEntryPoint<ZipperBootstrapper>(Lifetime.Singleton);
 > ⚠️ **与现状的差异**：现在 `ResourcesBootstrapper` 是**直接** `RegisterEntryPoint`（自己启动）；改为实现 `IZModuleBootstrap`、注册进集合，由总 Bootstrap 统一调用。日志模块同理（不再有静态 `ZLogBootstrap.Initialize`）。
 > **为何要分层**：① 启动顺序**显式可控**（日志阶段先于资源阶段，写在总 Bootstrap 里）；② 阶段内新增模块不动总 Bootstrap；③ 模块可裁剪（不注册就不启动）。
 
-### 5.5 补充：能否让"顺序"根本不需要管？
+### 5.5 Bootstrap 放哪（位置约定）
+
+| 角色 | 放哪 | 理由 |
+|---|---|---|
+| 契约 `IZModuleBootstrap` + `ZBootPhase` | **`Zipper.Core`**（如 `Core/Boot/`） | 零依赖契约层；所有模块都能实现，不反向依赖组装层 |
+| **各模块的 Bootstrap**（`ZLoggerBootstrap` / `ZResourceBootstrap` / `ZObjectPoolBootstrap`） | **各模块程序集内**（`Core/Logging/`、`Resources/`、`Pool/`） | ① **`internal` 可见性（硬约束）**：Bootstrap 常要访问模块内部类型（Router/Sink/dispatcher 等），放 DI 程序集看不到，只能改 public 或加 `InternalsVisibleTo`；② 模块自包含、可裁剪（删模块时一起走）；③ 依赖方向干净（只依赖自身 + Core 契约） |
+| **总 Bootstrap**（`ZipperBootstrapper`） | **组装层**（`Zipper.DI`，未来 `Zipper.Runtime`） | 装配与顺序编排正是组装层职责 |
+| 容器注册代码（`builder.Register<...>().As<IZModuleBootstrap>()`） | 组装层（`GameLifetimeScope.Configure`） | 同上 |
+
+**一条关键区分**：
+- **注册**（`IContainerBuilder`）→ 组装层职责；**模块 Bootstrap 不应持有 `IContainerBuilder`**（否则变成"第二个注册入口"，职责混乱、顺序失控）
+- **初始化**（运行时装配：开文件、加载 catalog、创建驱动对象）→ 模块自己的 Bootstrap
+
+**现状改动点**：`ResourcesBootstrapper` 目前在 `Assets/Zipper/DI/`（Assembly-CSharp 程序集）。按本约定应**迁到 `Assets/Zipper/Resources/`**（进 `Zipper.Resources` 程序集）并改名为 `ZResourceBootstrap`、实现 `IZModuleBootstrap`；若它只用到 public 类型，留在 DI 也能跑，但会与其它模块的 Bootstrap 位置不一致。
+
+### 5.6 补充：能否让"顺序"根本不需要管？
 
 有一个更彻底的方向（**可选，v1 不做**）：让日志"**注入即就绪**"——把 Router/Sink 的装配放在 `ZLogger` 的构造（或一个惰性初始化器）里，**主线程驱动对象改为首次需要 Console 输出时惰性创建**。这样任何模块拿到 `IZLogger` 就能直接用，**不再依赖"日志先启动"这个阶段顺序**。
 
@@ -408,6 +423,7 @@ ZLogRouter（实例）
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v1.3 | 2026-09-10 | 新增 **§5.5 Bootstrap 位置约定**：契约 `IZModuleBootstrap`/`ZBootPhase` 放 `Zipper.Core`；**各模块 Bootstrap 放各模块程序集内**（硬约束：需要访问模块 `internal`；且自包含可裁剪、依赖方向干净）；总 `ZipperBootstrapper` 与容器注册放组装层；并明确"注册归组装层、初始化归模块 Bootstrap（模块 Bootstrap 不持有 `IContainerBuilder`）"；记录现状改动点（`ResourcesBootstrapper` 建议从 `DI/` 迁到 `Resources/`）；原 §5.5 顺延为 §5.6 |
 | v1.2 | 2026-09-10 | **启动顺序机制改硬**（回应"顺序不可控"的质疑）：`IZModuleBootstrap` 的 `int Order` 改为语义化 **`ZBootPhase` 枚举**；总 Bootstrap **把阶段顺序显式写在代码里**（`await RunPhase(Logging) → RunPhase(Events) → RunPhase(Resources) → RunPhase(Pools)`），阶段内才遍历集合 → 顺序**编译期可见、单点可控**，同时阶段内新增模块无需改代码；§5.3 补四种做法对照表；新增 §5.5"惰性初始化让顺序无关"的可选方向 |
 | v1.1 | 2026-09-10 | 落实第二轮决策：① 编译期剥离**定案方案 a**（放弃剥离，运行时过滤 + `IsEnabled` 前置判定）；② 主线程驱动**定案方案 a**（驱动对象 + `ZMainThreadDispatcherDriver`）；③ caller 定为**三件套**（`nameof(类名)` 显式 + `[CallerMemberName]` + `[CallerLineNumber]`）；④ `context` 保留并新增 §4.1 **用法说明**（Console 对象关联与双击跳转）；⑤ **Bootstrap 分层**（§5：`IZModuleBootstrap` 契约 + 总 `ZipperBootstrapper` 从容器取集合、按 `Order` 依次调用；同步说明与现有 `ResourcesBootstrapper` 的差异）；⑥ 文件 Sink 新增 **§7.2 按日期切分**（跨零点写新文件；不轮转、不清理）；⑦ **去掉去重折叠**（§8：Console 自带 Collapse 已覆盖显示层）；⑧ 池侧改为**构造参数**接收 `IZLogger`（不污染 `ZPoolOptions<T>`） |
 | v1.0 | 2026-09-10 | 初稿：按使用者 6 条约束重做日志设计——Bootstrap 实例化、主线程分发器实例化、5 级、接口带 caller、取消 `ZLogModule`、取消静态门面；记录"放弃编译期剥离"的连锁后果；补齐装配/驱动/Sink/并发/验收/待决项 |
