@@ -1,6 +1,6 @@
-# Zipper Unity 框架 — 技术路线规划（v0.8 待审批）
+# Zipper Unity 框架 — 技术路线规划（v0.9 待审批）
 
-> 状态：**v0.8 草稿，待审批**
+> 状态：**v0.9 草稿，待审批**
 > 定位：本文件是框架开发的总体技术路线，回答「做什么、怎么做、按什么顺序做」；**不含代码实现**。
 > 依据：协调者规范（先文档、后编码；无批准、不实施）；`docs/standards/agent-role.md`（AI 只做设计，代码由使用者实现）。
 > 变更记录：v0.2 融入调研结论；v0.3 定为 **.unitypackage 右键导出、拆箱即用**（放弃 UPM 包形态）；**v0.4（2026-09-06）** 同步近期现实与决策——现状盘点更新、资源管理器键体系改为 address/label、Core 定为"零框架依赖"例外、新增事件总线决策、新增 Core 基础设施一节、里程碑状态刷新；**v0.5** 事件总线改**双实现**（自研 + R3 封装，R3 只负责 UI 通知）；**v0.6** 事件总线命名统一框架约定（`IZEventBus` / `ZEventBus` / `ZR3EventBus`，见命名规范）；**v0.7（2026-09-06）** 事件总线由双实现**收敛为单实现 + R3 桥**（删除 `ZR3EventBus`，R3 只做响应式流与订阅侧操作符加工）；**分发相关（UPM 依赖与"随包自包含"的冲突）按使用者决定暂缓，待其另行决策**。
@@ -26,9 +26,9 @@
 | 绑定层 | **R3 1.3.1 已引入**：核心库 `R3.dll`（NuGet 包，置于 `Assets/Packages/`）+ Unity 集成 UPM git 包 `com.cysharp.r3` | 只做**响应式流**，不承担事件路由（v0.7）；上手笔记见本地 `LocalNotes/r3-tutorial.md`（不入库） |
 | 资源层 | **Addressables 1.22.3（已安装）** | 资源管理器底层就绪 |
 | DOTS | 未安装 | ECS 对象池的前置依赖，M4 再引 |
-| 已有代码 | `Assets/Zipper/{Core,DI,Pool,Resources}`（asmdef 已建；Resources 含 Asset 句柄三件套） | 骨架已落地，M0 迁移已完成 |
+| 已有代码 | `Assets/Zipper/{Core,DI,Pool,Resources}`：Core 含 `Boot/`、`Logging/`、`Events/`；**Pool 实现完成**（`ZObjectPool<T>` + 管理器 + 状态 DTO）；Resources 含句柄三件套 + `ZResourcesBootstrapper`；DI 含 `GameLifetimeScope` + `ZBootstrapper` | 池模块 v1 定稿；Bootstrap 分层已落地；日志/事件总线待实现 |
 | 工程治理 | git 已 init 并推送远端仓库 `xrzxrzx/UnityZipper`；`docs/` 已建（planning/research/architecture/standards/memory） | M0 治理部分完成；AGENTS.d 与 C# 编码规范仍缺 |
-| 设计文档 | 资源管理器设计稿 v0.3、Core 设计稿 v0.7 | 供实现参照（只含思路级伪代码） |
+| 设计文档 | 资源管理器 v0.3、Core v0.9.2、**日志 v1.4**、**池管理器 v0.2.8**、**启动机制 v1.0** | 供实现参照（只含思路级伪代码） |
 
 ## 3. 技术选型总览
 
@@ -142,7 +142,7 @@ Assets/Zipper/
 
 | 阶段 | 做什么 | 状态 |
 |---|---|---|
-| **v1（现在）** | 用现有 `GameLifetimeScope` 直接充当组装层：注册 `IZLogger` / `IZEventBus` / `IZResourceManager` / `IZObjectPoolManager`（均为 Singleton）+ 启动时初始化日志系统 + 注册 `ResourcesBootstrapper` 入口点 | 多数已完成，差池管理器一行与日志初始化调用 |
+| **v1（现在）** | 用现有 `GameLifetimeScope` 直接充当组装层：注册 `IZLogger`（→ `ZLogger`）/ `IZEventBus` / `IZResourceManager` / `IZObjectPoolManager`（均 Singleton）+ 各模块 Bootstrap 注册为 `IZModuleBootstrap` + **总 Bootstrap `ZBootstrapper` 作为唯一入口点**（按 `ZBootPhase` 阶段顺序调用，日志阶段最先） | 注册与 Bootstrap 分层**已落地**（`Core/Boot/` 契约、`DI/ZBootstrapper.cs`、`Resources/ZResourcesBootstrapper.cs`）；机制见 `docs/architecture/bootstrap-design.md` |
 | **按需** | **组合器**（按 address 建池 + 母本托管：加载 → 建池 → 销毁时先清池再释放母本）——只要出现"用地址建池"的需求就写，约 20~30 行；位置放一处（业务侧统一服务），避免顺序纪律散落 | 未做（可选） |
 | **延后** | 独立 `Zipper.Runtime` 程序集 + asmdef（DI 在 Assembly-CSharp 可用，**等分发时再考虑**）；"一键引导"组件；场景 / 子 Scope 层级策略 | 明确延后 |
 
@@ -163,10 +163,10 @@ Assets/Zipper/
 
 ### 5.6 基础设施（Zipper.Core）— v0.4 新增
 
-- **日志系统**：分级（Trace…Fatal）、模块 tag、编译期剥离（Release 剥离 Info 及以下）、运行时级别控制、Console + 文件双输出、线程安全。
+- **日志系统（v0.9 同步为 v1 定案）**：5 级（`Debug/Info/Warning/Error/Fatal`）、**caller 三件套**（`nameof(类名)` + `[CallerMemberName]` + `[CallerLineNumber]`）、**无模块枚举**（来源由 caller 体现）、**无静态门面**（只用 `IZLogger`/`ZLogger` 实例注入）、运行时级别控制（**放弃编译期剥离**，靠 `IsEnabled` 前置判定做到零分配）、Console + 文件双 Sink、**文件按日期切分**（跨零点自动新文件；不轮转不清理）、线程安全（主线程分发器为实例）。设计稿：`docs/architecture/logging-design.md`（v1.4）
 - **事件总线（单实现 + R3 桥，v0.7）**：`IZEventBus` 接口 + `ZEventBus`（唯一实现，均在 Core）；**R3 在本框架只负责 UI 响应式流**（绑定、面板与 ViewModel 通知），事件路由统一走总线；需要操作符的场景在**订阅侧**经 R3 桥（`AsObservable` 扩展，不进 Core）加工——**不新建第二条总线实现**。边界纪律：只用于"跨模块低频通知"，不用于请求-响应、状态查询、高频数据流（后者走 R3 流或直接引用）；同一件事只发布一次。
 - 其它：`ZAssert` 断言、按需扩展方法、版本常量。
-- 设计稿：`docs/architecture/core-design.md`（v0.7）。
+- 设计稿：`docs/architecture/core-design.md`（v0.9.2）、`docs/architecture/logging-design.md`（v1.4）；**启动 / Bootstrap 机制见 `docs/architecture/bootstrap-design.md`（v1.0）**。
 
 ## 6. 打包与分发（目标不变，依赖形态待决）
 
@@ -216,7 +216,9 @@ Assets/Zipper/
 ## 附录
 
 - 调研报告：`docs/research/unity-framework-tech-facts.md`（其中的 UPM 包形态方案**已被 v0.3 的右键导出取代**）
-- 模块设计稿：`docs/architecture/resource-manager-design.md`、`docs/architecture/core-design.md`
+- 模块设计稿：`docs/architecture/resource-manager-design.md`（v0.3）、`docs/architecture/core-design.md`（v0.9.2）、`docs/architecture/pool-manager-design.md`（v0.2.8）、`docs/architecture/logging-design.md`（v1.4）
+- 启动 / 装配机制：`docs/architecture/bootstrap-design.md`（v1.0）
+- 本地教程（**不入库**，`.gitignore` 白名单外）：`LocalNotes/rx-tutorial.md`、`LocalNotes/r3-tutorial.md`、`LocalNotes/logging-implementation-guide.md`
 - 规范：`docs/standards/git-workflow.md`、`docs/standards/agent-role.md`、`docs/standards/naming-convention.md`（Z/IZ 前缀约定）
 - 进度记忆：`docs/memory/progress-2026-09-05-06.md`
 
@@ -224,6 +226,7 @@ Assets/Zipper/
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.9 | 2026-09-10 | 同步设计与实现进展：① §5.6 日志描述更新为 **v1 定案**（5 级 / caller 三件套 / 无模块枚举 / 无静态门面 / 放弃编译期剥离 / 文件按日期切分）；② §5.5 组装层改为 **总 Bootstrap + 各模块 Bootstrap（`IZModuleBootstrap` + `ZBootPhase`）**，机制见新文档 `docs/architecture/bootstrap-design.md`；③ §2 现状盘点（设计文档版本、池模块实现完成、Bootstrap 分层已落地）；④ 附录补全设计稿与本地教程清单 |
 | v0.8 | 2026-09-10 | **更正对 R3 异常模型的描述**：R3 用 `OnErrorResume`（异常**不会**自动退订），故"用 R3 做总线必然因异常语义复制自研内核"的说法作废；«单实现 + R3 桥»结论不变，依据改为**路由**（R3 无"按类型全局登记订阅者"机制）。详见 `docs/architecture/core-design.md` v0.8 §4.3 |
 | v0.7 | 2026-09-10 | **事件总线由「双实现」收敛为「单实现 + R3 桥」（使用者决策）**：删除 `ZR3EventBus`；§2 现状盘点绑定层、§3 选型表事件总线行、§4.1（原则未变）、§5.6 基础设施、§9 风险表同步改写；新增风险行「总线与 R3 职责漂移」。决策依据见 `docs/architecture/core-design.md` §4.3（R3 无类型路由的全局注册表、用 R3 当总线仍要自建路由、桥比第二实现更小更强） |
 | v0.6 | 2026-09-06 | 事件总线命名统一框架约定（`IZEventBus` / `ZEventBus` / `ZR3EventBus`） |
@@ -234,4 +237,4 @@ Assets/Zipper/
 
 ## 审批记录
 
-- [ ] 使用者批准 v0.8（日期：____，意见：____）
+- [ ] 使用者批准 v0.9（日期：____，意见：____）
