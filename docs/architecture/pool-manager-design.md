@@ -103,7 +103,7 @@ Get<T>(PoolKey key = default)
 
 **两个必须收敛的细节**：
 
-1. **委托类型上移**：初稿签名里出现了 `ZObjectPool<T>.InitializeActionDelegate` 这类**嵌套在具体类里的委托类型** → 等于让"接口依赖具体类"。应提升为独立类型（如 `ZPoolAction<T>`）或放进 `ZPoolOptions<T>`，接口只依赖 options。
+1. **委托类型的归宿（v0.2.1 澄清）**：`InitializeActionDelegate` 这类委托**参数是 `T`**，因此**不能放进非泛型 `ZObjectPoolBase`**（放进去只能改参数为 `IZObjectPoolItem`，业务回调被迫 `as` 转型、注册处就丢类型信息）。三选一：**(a)** 留在 `ZObjectPool<T>` 内（现状，但会让管理器接口引用具体类、4 个同类型参数易错序）；**(b)** 换成 BCL 的 `Action<T>`（少 4 个自定义类型，但相邻同类型参数仍易混）；**(c)** **收进 `ZPoolOptions<T>`（推荐）**——接口干净、字段有名、以后加配置不改签名；内部仍可用 `Action<T>`。委托本身无装箱问题（`Action<T>` 是引用类型，lambda 编译期缓存为静态委托，无每帧分配）。
 2. **超限策略要可配**（对应你代码里的 TODO）：现在 maxSize 到顶就 `throw`——"太激进"（你的原话）。建议 `ZPoolOverflowPolicy { Throw, ReturnNull, Expand }`：`Throw` 保持现状 / `ReturnNull` 让调用方降级（这一帧不再生成）/ `Expand` 忽略 maxSize。**默认值待你定**（§10）。
 
 ---
@@ -156,6 +156,25 @@ ZObjectPoolManager（Scope 单例，主线程独占）
 - 依赖方向保持单向：`Core ← Pool`、`Core ← Resources`，组合器落在上层（依赖两者），**没有循环依赖**
 - 若多个业务点都要"按 address 建池"，就把组合器做成 **Runtime 层的一个服务**，避免每处各写一遍（顺序写错就出事故）
 - 组合器自身也应支持"统一销毁全部托管的母本"（Scope 关闭时先清池再释放）
+
+### 5.4 转型会不会装箱？（v0.2.1 澄清：不会）
+
+`ZObjectPoolBase` ↔ `ZObjectPool<T>` 之间的转换**没有任何装箱**：
+
+| 转换 | 装箱？ | 说明 |
+|---|---|---|
+| `ZObjectPool<T>` → `ZObjectPoolBase`（向上） | ❌ | 引用赋值，改的是引用类型，对象不变 |
+| `ZObjectPoolBase` → `ZObjectPool<T>`（`as` / 显式转） | ❌ | 仅一次类型检查（`castclass`）；失败为 null 或抛异常 |
+| `EnemyView` → `IZObjectPoolItem`（class 实现接口） | ❌ | 同样是引用转换 |
+| `struct` → `object`/接口 | ✅ | **只有这种才装箱**——而 `T : Component` 必为 class，永不发生 |
+
+真实开销只有两处，且都在**低频路径**（`CreatePool` / `Get`）：
+
+1. `Dictionary<Type, ZObjectPoolBase>` 的查找（哈希 + 比较）
+2. 一次 `castclass`（纳秒级）
+
+> **要不要为了"零字典零转型"改用泛型静态缓存**（`static class PoolHolder<T> { public static ZObjectPool<T> Pool; }`）？**不建议**：它引入静态状态（多容器/并行单测互相污染），且无法枚举全部池（`Dispose` 统一清理仍需一个非泛型列表）。为省纳秒级开销不值得。
+> **优化优先级**：先保证"池够用（不频繁新建实例）"——那才是数量级差异；类型转换从来不是瓶颈。
 
 ---
 
@@ -276,6 +295,7 @@ TryGetStats<T>(out stats)：
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.2.1 | 2026-09-10 | 澄清两个实现疑问：① 新增 §5.4「转型会不会装箱」——**基类↔派生/接口↔class 都是引用转换，无装箱无分配**（装箱只发生在值类型→object/接口，而 `T : Component` 必为 class）；② §4 细节 1 改写为"委托类型的归宿"三方案对比（**推荐收进 `ZPoolOptions<T>`**；**不能放进非泛型基类**，因委托参数是 `T`） |
 | v0.2 | 2026-09-10 | **使用者纠正**：撤销"`CreatePoolAsync(address)` + 池管理器托管母本"设计——**池管理器只接收 `GameObject prefab`，不碰资源句柄、不依赖 `Zipper.Resources`**；新增 §5.3「按 address 建池 + 母本托管放上层组合器」（含伪代码与顺序纪律归属）；§1/§2/§4/§5/§6/§7/§8/§9/§10 全面改写；删除"依赖方向待决"（已定：Pool 与 Resources 互不依赖） |
 | v0.1 | 2026-09-10 | 初稿：基于使用者 `IZObjectPoolManager` 初稿的评审定稿——一类型一池 / 全程用 `T` 寻址 / 泛型存储 / 接口收敛 / 十条雷区 / 验收与差异清单 |
 
