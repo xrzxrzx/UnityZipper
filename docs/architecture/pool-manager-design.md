@@ -96,9 +96,10 @@ Get<T>(PoolKey key = default)
 | 销毁池 | `void DestroyPool<T>()` | 语义：**先清池（销毁全部实例）→ 移除登记**。**不涉及任何资源句柄** |
 | 清空池 | `void ClearPool<T>()` | 只销毁实例，**保留池**（下次还能借） |
 | 获取 | `T Get<T>()` | 未注册池 → 抛**信息明确**的异常（含类型名 + "请先 CreatePool"） |
-| 批量获取 | `List<T> GetItemsByCount<T>(int count)` / `void GetItemsByCount<T>(int count, List<T> result)` | 保留现有两个重载 |
-| 统计 | `bool TryGetStats<T>(out ZPoolStats stats)` | 未注册返回 false（查询类接口不炸） |
-| 全部清理 | `void Dispose()` | Scope 关闭：遍历销毁全部池（实例回收）+ 清空登记 |
+| 批量获取 | `List<T> GetItemsByCount<T>(int count)` / `void GetItemsByCount<T>(int count, List<T> result)` | 保留现有两个重载；**约束必须与其他方法一致**（`where T : Component, IZObjectPoolItem`）——否则实现里连 `as ZObjectPool<T>` 都写不出来 |
+| 归还（便利入口） | `void Return<T>(T item)` | 与池注入的 `Item.ReturnToPool` 是**两条路径**（都落到池的 `ReturnItemToPool`，重复归还由池的 inactive 检查兜住）；管理器入口便于调用方不必持有委托 |
+| 统计 | `ZPoolsState GetPoolsState()` | **聚合快照** DTO：池数量 + 各池 `total/active/inactive` + 汇总（实现现状采用此形态，优于按类型单查）。若将来需要单池实时查询，可另加 `TryGetStats<T>` |
+| 全部清理 | `void Dispose()`（建议 `IZObjectPoolManager : IDisposable`） | Scope 关闭：遍历销毁全部池（实例回收）+ 清空登记。**基类已有 `Dispose`，管理器必须暴露入口** |
 | 主线程约定 | 注释声明 | 所有成员仅主线程调用 |
 
 **两个必须收敛的细节**：
@@ -117,7 +118,12 @@ ZObjectPoolManager（Scope 单例，主线程独占）
  └─ 统一出口：Create / Destroy / Clear / Get / TryGetStats / Dispose
 ```
 
-### 5.1 存储为什么要非泛型基类
+### 5.1 存储用什么 key + 为什么要非泛型基类（v0.2.4 明确）
+
+**key 必须与接口的寻址方式一致**：接口按 `T` 寻址（`Get<T>()` / `DestroyPool<T>()` / `ClearPool<T>()`），因此内部存储用 **`Dictionary<Type, ZObjectPoolBase>`（key = `typeof(T)`）**，O(1) 命中、与"一类型一池"吻合。
+
+> ⚠️ 若用 `Dictionary<GameObject, ZObjectPoolBase>`（按 prefab 索引），`Get<T>()` 只能**遍历**查找（O(n)，且同 `T` 多 prefab 时歧义）——**除非接口改成显式 key 寻址**（`Get<T>(key)`）。两条路选一条，不要一半一半。
+> 另：`ZPoolsState` 这类 DTO 不要接收内部字典类型（实现细节泄漏），改收 `IReadOnlyCollection<ZObjectPoolBase>` 或已算好的数字。
 
 不同 `T` 的池类型不同（`ZObjectPool<EnemyView>`、`ZObjectPool<Bullet>`），要放进同一个字典只有两条路：
 
@@ -379,6 +385,7 @@ poolManager.CreatePool<EnemyView>(options);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.2.4 | 2026-09-10 | 按使用者实现现状同步 + 评审结论：§4 统计改为 **`ZPoolsState GetPoolsState()`**（聚合快照 DTO，比原 `TryGetStats<T>` 更好用）、新增 **`Return<T>(T item)`** 便利归还入口（与 `Item.ReturnToPool` 两条路径并存）；§5.1 明确**存储 key 用 `typeof(T)`**（与接口寻址一致，否则 `Get<T>()` 只能遍历）与"DTO 不收内部字典类型"；§9 待使用者的三处修改：`GetItemsByCount<T>` **补泛型约束**、`IZObjectPoolManager` **补 `IDisposable`**、内部存储 key 与接口对齐 |
 | v0.2.3 | 2026-09-10 | 新增 §5.2「**基类不要设计成"空对象"**」：空基类只解决"存/取转型"，**解决不了管理器统一清理**（遍历时 `T` 未知，无法调 `ZObjectPool<T>.Clear()`）；给出最小成员集（`Clear` 必须 + `Count*` 推荐 + `Prefab` 可选），并指出改造量几乎为零（池里已有这些成员）；提示基类命名口径（`ObjectPoolBase` vs `ZObjectPoolBase`）由使用者定。§5 编号顺延（→ 5.1–5.5）并同步全文引用 |
 | v0.2.2 | 2026-09-10 | 新增**附录 A：`ZPoolOptions<T>` 形态示意**——落实 §4 细节 1 的"方案 c + BCL `Action<T>`"：配置对象字段清单、池构造收 options、**必须拷贝值（不持有引用）**、四个调用时机、管理器接口签名、调用方对象初始化器写法、5 条易错细节 |
 | v0.2.1 | 2026-09-10 | 澄清两个实现疑问：① 新增 §5.5「转型会不会装箱」——**基类↔派生/接口↔class 都是引用转换，无装箱无分配**（装箱只发生在值类型→object/接口，而 `T : Component` 必为 class）；② §4 细节 1 改写为"委托类型的归宿"三方案对比（**推荐收进 `ZPoolOptions<T>`**；**不能放进非泛型基类**，因委托参数是 `T`） |
