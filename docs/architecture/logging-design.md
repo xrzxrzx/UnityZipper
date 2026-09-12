@@ -200,6 +200,18 @@ ZLoggerBootstrap.InitializeAsync：
 - `Internal/ZMainThreadDispatcherDriver.cs` 是 Core 内**唯一**的 MonoBehaviour（不引 UniTask / VContainer，Core 零框架依赖不变）
 - 备选（记录备查）：PlayerLoop 注入（无额外对象、代码更复杂）；外部驱动（依赖场景对象，顺序易错）
 
+**IL2CPP / 脚本后端兼容性（澄清）**：
+
+| 概念 | 说明 |
+|---|---|
+| `MonoBehaviour` | Unity 的**运行时基类**（挂 GameObject 的脚本都继承它） |
+| `Mono` / `IL2CPP` | Unity 的两种**脚本后端**——IL2CPP 构建里 MonoBehaviour 照常工作 |
+
+- 本设计用到的都是**编译期确定类型**的路径：`new GameObject(...)`、`AddComponent<ZMainThreadDispatcherDriver>()`（泛型、AOT 静态实例化）、`DontDestroyOnLoad`、引擎回调 `Update()`——**均非反射**，IL2CPP 下无需任何额外配置。
+- 需要避免的是反射式替代写法：`AddComponent(Type)`（运行期类型）、`MakeGenericMethod/MakeGenericType`、`System.Reflection.Emit`——本设计**均未使用**（Core 也不引任何 Emit 库）。
+- **主线程派发与脚本后端无关**：`Debug.Log` 的主线程约束来自 Unity API 的线程模型，Mono 与 IL2CPP 相同。
+- 若不想新增隐藏对象（可选替代）：① PlayerLoop 注入（无 MonoBehaviour，但要重建 `PlayerLoopSystem` 并处理域重载，调试更难）；② 由已有 MonoBehaviour（如 `GameLifetimeScope`）在 `Update()` 中代跑 `Pump()`（零新增对象，但把日志输出绑在该对象存活上）；③ 上层改用 UniTask/R3 的 PlayerLoop 工具（Core 零依赖，不适用）。**v1 仍采用驱动对象**（自包含、简单、可控每帧上限）。
+
 ---
 
 ## 7. Router 与 Sink
