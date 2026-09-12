@@ -150,6 +150,17 @@ Assets/Zipper/
 - **唯一代价**：不做组合器时，"母本托管 + 先清池再释放母本"的顺序纪律要自己守 → 建议把这段编排**收敛在一处**（别散落多个脚本）。
 - 依赖注入、async 生命周期（`IAsyncStartable` 等）与 CancellationToken 注入按官方用法使用；将来若引入 UI/音频管理器，再评估是否需要独立程序集。
 
+**注入方式约定（v0.8 补充，含 AOT 说明）**：
+
+| 场景 | 用什么 | 理由 |
+|---|---|---|
+| **普通 C# 类**（Bootstrapper / Service / ViewModel） | **构造函数注入** | 编译期静态引用：AOT 最稳、零反射、可直接 `new` 做单测（传 mock） |
+| MonoBehaviour / 场景对象 / 组件（框架无法构造的类型） | `[Inject]` 成员注入 | 这是它存在的唯一理由 |
+
+- **AOT 实证（VContainer 1.19.0 源码）**：注入按 `InjectorCache` 三级回退——① 编译后由 **ILPostProcessor** 生成的 `{类型}GeneratedInjector` → ② 静态方法 `__GetGeneratedInjector` → ③ 回退 `ReflectionInjector`（`FieldInfo.SetValue`）。生成器路径**不依赖 `Emit`**，IL2CPP 下可用；回退路径每次走反射（有缓存但慢）。
+- ⚠️ **剥离注意**：`VContainer.PreserveAttribute` 是 **VContainer 自己定义的**，不是 `UnityEngine.Scripting.PreserveAttribute`——**Unity linker 不认它**。字段之所以安全，是因为**生成的注入器静态引用了它**；若生成器缺失（程序集未被 ILPostProcess 处理、或注入运行时代码生成的类型），字段只被反射访问，**高 stripping level 下有被裁风险** → 需 `link.xml`，或直接改用构造函数注入。
+- 本工程实践：`ResourcesBootstrapper` 之类的普通类建议改为构造函数注入（现状为 `[Inject]` 字段）。
+
 ### 5.6 基础设施（Zipper.Core）— v0.4 新增
 
 - **日志系统**：分级（Trace…Fatal）、模块 tag、编译期剥离（Release 剥离 Info 及以下）、运行时级别控制、Console + 文件双输出、线程安全。
