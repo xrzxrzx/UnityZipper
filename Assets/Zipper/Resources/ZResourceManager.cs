@@ -5,7 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
-using Zipper.Resources;
+using Zipper.Core.Logging;
 using Zipper.Resources.Asset;
 
 namespace Zipper.Resources
@@ -16,8 +16,11 @@ namespace Zipper.Resources
 
         readonly HashSet<AssetHandleBase> _book;
 
-        public ZResourceManager()
+        IZLogger _logger;
+
+        public ZResourceManager(IZLogger logger)
         {
+            _logger = logger;
             _initLazy = new AsyncLazy<bool>(InitializeCoreAsync);
             _book = new HashSet<AssetHandleBase>();
         }
@@ -58,10 +61,16 @@ namespace Zipper.Resources
                 _book.Add(handle);
                 return handle;
             }
-            catch
+            catch(System.OperationCanceledException ex)
             {
                 Addressables.Release(inner);
-                //TODO 细分System.OperationCanceledException异常，同时加入日志记录
+                _logger.Error($"资源 {address} 加载被取消, 持有者: {owner}", ex);
+                throw;
+            }
+            catch(System.Exception ex)
+            {
+                Addressables.Release(inner);
+                _logger.Error($"资源 {address} 加载失败, 持有者: {owner}", ex);
                 throw;
             }
         }
@@ -75,7 +84,7 @@ namespace Zipper.Resources
         /// <param name="owner">传nameof()</param>
         /// <param name="ct"></param>
         /// <returns></returns>
-        public async UniTask<PrefabAsset> LoadPrefabAsync(string address, string owner = "", CancellationToken ct = default)
+        public async UniTask<PrefabAsset> LoadPrefabAsync(string address, [CallerMemberName] string owner = "", CancellationToken ct = default)
         {
             var handle = await LoadAssetAsync<GameObject>(address, owner, ct);
             return new PrefabAsset(handle);
@@ -87,11 +96,9 @@ namespace Zipper.Resources
             _book.Clear();
             foreach (var handle in bookArray)
             {
-                //TODO 之后改成自己的日志系统
-                Debug.LogWarning($"[ZResourceManager]: 资源 {handle.Address} 未被释放, 持有者: {handle.Owner}，已由管理器释放");
+                _logger.Warning($"资源 {handle.Address} 未被释放, 持有者: {handle.Owner}，已由管理器释放");
                 handle.Dispose();
             }
-            _book.Clear();
         }
     }
 }

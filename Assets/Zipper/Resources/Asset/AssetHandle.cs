@@ -1,11 +1,11 @@
 using UnityEngine.ResourceManagement.AsyncOperations;
-using Zipper.Resources.Asset;
 
-namespace Zipper.Resources
+namespace Zipper.Resources.Asset
 {
     public sealed class AssetHandle<T> : AssetHandleBase
     {
-        public T Asset { get; } = default;
+        private T _asset = default;
+        public T Asset { get => IsReleased ? default : _asset; private set => _asset = value; }
 
         readonly AsyncOperationHandle<T> _inner;
         readonly System.Action<AssetHandle<T>> _unbook;
