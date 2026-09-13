@@ -189,6 +189,16 @@ InitializeAsync:
 > **例外**：若将来**多个模块**都需要"把回调派发到主线程"，应抽成独立服务 `IZMainThreadDispatcher`（放 Core，惰性单例注册并在工厂里断言主线程），而不是让别的模块去拿日志的 dispatcher。现在只有一个使用者 → YAGNI，先不抽。
 > **可测性**：构造函数注入使 Router 可脱离容器单测（`new ZLogRouter(new FakeDispatcher(), sinks, ZLogLevel.Debug)`）。
 
+**为什么 `Attach` 不放在 `IZLogger` 上（接口隔离）**：
+
+| 方案 | 做法 | 评价 |
+|---|---|---|
+| ❌ 放进公共接口 | `IZLogger.Attach(router)` | ① 任何拿到 logger 的模块都能**重新装配日志系统**（劫持/重定向/重复 Attach）；② 接口签名依赖内部类型 `ZLogRouter`——它若是 `internal`，public 接口成员**直接编译不过**；③ "何时能调/能调几次"属生命周期语义，不该出现在使用者接口上 |
+| ✅ **专用装配接口**（接口隔离） | 另立装配接口（若 Router 为 `internal`，则该接口也设 `internal`）：`void Attach(ZLogRouter router);`；注册 `.As<IZLogger>().As<…>()`；**Bootstrap 注入该接口**而非具体类型 | 使用者只看到 `IZLogger`（无 `Attach`），装配者用专用接口；代价：多一个类型 |
+| ✅ **组装层直接用具体类型**（现行方案） | Bootstrap 注入 `ZLogger` 调 `Attach` | 最简、零新增类型；**组装层天生知道具体类型**（装配即其职责），这里的"依赖具体类型"不算耦合缺陷 |
+
+> **原则**：**"使用者接口"与"装配者接口"要分开**——谁能调什么，取决于他扮演的角色。
+
 ---
 
 ## 6. 主线程分发
