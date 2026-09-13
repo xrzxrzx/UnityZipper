@@ -165,12 +165,17 @@ _logger.Info($"加载 {prefab.name} 完成", nameof(Loader), context: prefab);
 **装配顺序与容器边界（路由器的 dispatcher 从哪来）**：
 
 ```
+// 前提：_logger 是【容器创建的那个单例】（Bootstrap 构造注入具体类型 ZLogger）
 InitializeAsync:
     _dispatcher = new ZMainThreadDispatcher();                   // ① 必须【主线程】创建（构造时记录主线程 ID）
     _router     = new ZLogRouter(_dispatcher, sinks, level);      // ② 构造注入 dispatcher ← 路由器不查容器
     var driver  = CreateDriverObject(); driver.Init(_dispatcher); // ③ 驱动对象持 dispatcher
-    _logger     = new ZLogger(_router);                           // ④ 日志器持 router
+    _logger.Attach(_router);                                     // ④ 把 router 装配进【容器创建的那个】logger
 ```
+
+> ⚠️ **不要 `new ZLogger(...)`**：`ZLogger` 由**容器创建并持有**（单例）；Bootstrap 若再 new 一个，其它模块注入到的就不是同一个对象。
+> **分工**：**容器负责"创建并持有"实例，Bootstrap 负责"初始化"这个已存在的实例**（两段式：构造 → `Attach`）。
+> `Attach` 之前若发生日志调用 → **静默忽略**（`IsEnabled` 返回 false、方法直接返回）——日志是**最先**启动的阶段（`ZBootPhase.Logging`），"之前"几乎不存在。
 
 | 组件 | 进容器？ | 理由 |
 |---|---|---|
@@ -180,6 +185,7 @@ InitializeAsync:
 | `ZLogRouter` / Sink（Console/File） | ❌ **不进** | 内部实现；注册等于给外部"绕过 `IZLogger` 改 Sink / 绕开级别控制"的越权口子 |
 
 > **原则**：**容器只装"对外服务"，不装"内部协作者"。**
+> **注册写法（关键）**：`builder.Register<ZLogger>(Lifetime.Singleton).As<IZLogger>();` —— 同一实例同时以 `ZLogger`（Bootstrap 注入，用于 `Attach`）与 `IZLogger`（其它模块注入）两种身份暴露。若写成 `Register<IZLogger, ZLogger>()`，Bootstrap 拿不到具体类型、无法调 `Attach`。
 > **例外**：若将来**多个模块**都需要"把回调派发到主线程"，应抽成独立服务 `IZMainThreadDispatcher`（放 Core，惰性单例注册并在工厂里断言主线程），而不是让别的模块去拿日志的 dispatcher。现在只有一个使用者 → YAGNI，先不抽。
 > **可测性**：构造函数注入使 Router 可脱离容器单测（`new ZLogRouter(new FakeDispatcher(), sinks, ZLogLevel.Debug)`）。
 

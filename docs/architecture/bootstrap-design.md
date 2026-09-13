@@ -151,8 +151,8 @@ public class ZipperBootstrapper : IAsyncStartable          // 由 VContainer 启
 ## 6. 容器注册（组装层）
 
 ```
-// 各模块服务
-builder.Register<IZLogger, ZLogger>(Lifetime.Singleton);
+// 各模块服务（日志用"同一实例双暴露"写法：Bootstrap 需注入具体类型做两段式装配 Attach）
+builder.Register<ZLogger>(Lifetime.Singleton).As<IZLogger>();
 builder.Register<IZEventBus, ZEventBus>(Lifetime.Singleton);
 builder.Register<IZResourceManager, ZResourceManager>(Lifetime.Singleton);
 builder.Register<IZObjectPoolManager, ZObjectPoolManager>(Lifetime.Singleton);
