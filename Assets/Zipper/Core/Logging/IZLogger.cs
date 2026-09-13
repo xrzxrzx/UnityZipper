@@ -12,7 +12,7 @@ namespace Zipper.Core.Logging
         Fatal
     }
 
-    public interface IZLogger
+    public interface IZLogger : IDisposable
     {
         bool IsEnabled(ZLogLevel level);
         void SetGlobalLevel(ZLogLevel level);
