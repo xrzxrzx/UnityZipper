@@ -198,6 +198,7 @@ InitializeAsync:
 | ✅ **组装层直接用具体类型**（现行方案） | Bootstrap 注入 `ZLogger` 调 `Attach` | 最简、零新增类型；**组装层天生知道具体类型**（装配即其职责），这里的"依赖具体类型"不算耦合缺陷 |
 
 > **原则**：**"使用者接口"与"装配者接口"要分开**——谁能调什么，取决于他扮演的角色。
+> **注意 internal 的边界**：① **接口本身**可以标 `internal`（如 `internal interface IZLogInitializable : IZLogger`）✓；② **接口成员**不能标 `internal`——C# 8 起非 public 接口成员**必须有默认实现**，无法作为"待实现类实现的契约"（且默认实现访问不到实现类的 `Router`）；③ `IZLogger` **必须 public**（Pool / Resources / UI 在不同程序集注入它）；④ 若装配接口为 internal，**注册代码在组装层（另一程序集）看不到它** → 不能用 `.As<IZLogInitializable>()`，需改用 `builder.Register<ZLogger>(Lifetime.Singleton).AsImplementedInterfaces();`（由 Core 程序集内部完成接口绑定）。
 
 ---
 
