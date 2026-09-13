@@ -198,6 +198,36 @@ InitializeAsync:
 | ✅ **组装层直接用具体类型**（现行方案） | Bootstrap 注入 `ZLogger` 调 `Attach` | 最简、零新增类型；**组装层天生知道具体类型**（装配即其职责），这里的"依赖具体类型"不算耦合缺陷 |
 
 > **原则**：**"使用者接口"与"装配者接口"要分开**——谁能调什么，取决于他扮演的角色。
+
+**`sinks` 与 `level` 从哪来（配置进容器、Sink 不进）**：
+
+| 对象 | 进容器？ | 说明 |
+|---|---|---|
+| `ZLoggerOptions`（全局级别、Console/File 各自门槛、日志目录、刷盘阈值、队列上限…） | ✅ **可以进**（`RegisterInstance`） | **配置数据**，组装层可注入自定义值；**有默认值**，不注册也能跑 |
+| `IZLogSink` 实例（Console / File） | ❌ **不进** | 内部实现（外部拿到即可绕过 Router 直接写）；创建时序属 Bootstrap 阶段（`FileSink` 要开文件、起后台线程） |
+| `IZLogSinkFactory`（可选扩展点） | ✅ 仅在需要"自定义 Sink"时注册 | Bootstrap 注入工厂列表 → 自己创建实例，受控的扩展口子 |
+
+```
+// 组装层
+var logOptions = new ZLoggerOptions {
+    GlobalLevel = ZLogLevel.Debug,
+    ConsoleMinimumLevel = ZLogLevel.Info,      // 屏幕只看 Info+
+    FileMinimumLevel = ZLogLevel.Debug,        // 文件收全
+};
+builder.RegisterInstance(logOptions);                                  // 可选（不注册 → 默认值）
+builder.Register<ZLogger>(Lifetime.Singleton).As<IZLogger>();
+
+// Bootstrap（注入 ZLoggerOptions）——sinks 在这里创建
+var sinks = new List<IZLogSink> { new ZConsoleSink(options.ConsoleMinimumLevel) };
+if (options.EnableFileSink)
+    sinks.Add(new ZFileSink(options.LogDirectory, options.FileMinimumLevel,
+                            options.FlushIntervalMs, options.FlushBytes, options.MaxQueuedLines));
+_router = new ZLogRouter(_dispatcher, sinks, options.GlobalLevel);
+_logger.Attach(_router);
+```
+
+> ⚠️ **坑**：`options` 若注册为 instance 且组装层之后又改字段，会改变运行中日志的行为 → Bootstrap 在 `Initialize` 时**把需要的值拷进自己的字段 / Sink**，不长期持有 options 引用（与池模块 `ZPoolOptions<T>` 同一个坑）。
+> **运行时改级别**走接口方法（`IZLogger.SetGlobalLevel(...)`），不通过 options——"启动配置"与"运行时调整"两条路不混。
 > **注意 internal 的边界**：① **接口本身**可以标 `internal`（如 `internal interface IZLogInitializable : IZLogger`）✓；② **接口成员**不能标 `internal`——C# 8 起非 public 接口成员**必须有默认实现**，无法作为"待实现类实现的契约"（且默认实现访问不到实现类的 `Router`）；③ `IZLogger` **必须 public**（Pool / Resources / UI 在不同程序集注入它）；④ 若装配接口为 internal，**注册代码在组装层（另一程序集）看不到它** → 不能用 `.As<IZLogInitializable>()`，需改用 `builder.Register<ZLogger>(Lifetime.Singleton).AsImplementedInterfaces();`（由 Core 程序集内部完成接口绑定）。
 
 ---
