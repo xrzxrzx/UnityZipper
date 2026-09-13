@@ -19,9 +19,9 @@ namespace Zipper.DI
         public async UniTask StartAsync(CancellationToken cancellation = default)
         {
             await RunPhaseAsync(ZBootPhase.Logging, cancellation);
+            await RunPhaseAsync(ZBootPhase.Events, cancellation);
             await RunPhaseAsync(ZBootPhase.Resources, cancellation);
             await RunPhaseAsync(ZBootPhase.Pools, cancellation);
-            await RunPhaseAsync(ZBootPhase.Events, cancellation);
             await RunPhaseAsync(ZBootPhase.UI, cancellation);
         }
 

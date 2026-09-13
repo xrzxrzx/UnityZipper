@@ -26,7 +26,7 @@ namespace Zipper.DI
 
             builder.Register<IZObjectPoolManager, ZObjectPoolManager>(Lifetime.Singleton);//对象池管理器
             builder.Register<IZResourceManager, ZResourceManager>(Lifetime.Singleton);//资源管理器
-            builder.Register<IZLogger, ZLogger>(Lifetime.Singleton);//日志模块
+            builder.Register<IZLogger, ZLogger>(Lifetime.Singleton).AsSelf();//日志模块，使用AsSelf()是为了暴露ZLogger的具体实现方便Bootstrapper初始化
             builder.Register<IZEventBus, ZEventBus>(Lifetime.Singleton);//事件总线
 
             #endregion
