@@ -30,6 +30,7 @@ namespace Zipper.Pool
         HashSet<T> clearPendingItems;
         int maxSize;
         int totalCount;
+        bool _disposed;
 
         public override int CountInactive => items.Count;
         public override int CountAll => totalCount;
@@ -38,38 +39,6 @@ namespace Zipper.Pool
         internal ZObjectPool(in ZPoolOptions<T> options, IZLogger logger)
         {
             _logger = logger;
-
-            #region 健壮性检查
-            if (options.Prefab == null)
-            {
-                _logger.Fatal("对象池：预制体不能为空", new ArgumentNullException(nameof(options.Prefab)));
-                return;
-            }
-
-            if (options.Prefab.GetComponent<T>() == null)
-            {
-                _logger.Fatal($"对象池：预制体 {options.Prefab.name} 缺少组件 {typeof(T).Name}");
-                return;
-            }
-
-            if (options.InitialSize < 0)
-            {
-                _logger.Fatal("对象池：InitialSize 不能为负数", new ArgumentOutOfRangeException(nameof(options.InitialSize)));
-                return;
-            }
-
-            if (options.MaxSize < 0)
-            {
-                _logger.Fatal("对象池：MaxSize 不能为负数", new ArgumentOutOfRangeException(nameof(options.MaxSize)));
-                return;
-            }
-
-            if (options.MaxSize > 0 && options.InitialSize > options.MaxSize)
-            {
-                _logger.Fatal("对象池：InitialSize 不能大于 MaxSize", new ArgumentException("InitialSize 不能大于 MaxSize"));
-                return;
-            }
-            #endregion
 
             this.prefab = options.Prefab;
             this.maxSize = options.MaxSize;
@@ -98,6 +67,9 @@ namespace Zipper.Pool
 
         private void ReturnItemToPool(IZObjectPoolItem item)
         {
+            if (_disposed)//池已销毁，不再接收归还，否则会误报"不属于当前对象池"
+                return;
+
             var tItem = item as T;
             if (tItem == null)
             {
@@ -145,6 +117,9 @@ namespace Zipper.Pool
 
         public T GetItem()
         {
+            if (_disposed)//池已销毁，不再产出新对象（静默返回，避免 GetItemsByCount 循环里刷屏）
+                return default;
+
             T item;
             if (items.Count > 0)
             {
@@ -181,13 +156,13 @@ namespace Zipper.Pool
             #region 健壮性检查
             if (count < 0)
             {
-                _logger.Fatal("对象池：count 不能为负数", new ArgumentOutOfRangeException(nameof(count)));
+                _logger.Error("对象池：count 不能为负数", new ArgumentOutOfRangeException(nameof(count)));
                 return;
             }
 
             if (result == null)
             {
-                _logger.Fatal("对象池：result 不能为 null", new ArgumentNullException(nameof(result)));
+                _logger.Error("对象池：result 不能为 null", new ArgumentNullException(nameof(result)));
                 return;
             }
             #endregion
@@ -195,7 +170,12 @@ namespace Zipper.Pool
             result.Clear();
             for (int i = 0; i < count; i++)
             {
-                result.Add(GetItem());
+                var item = GetItem();
+                if(item == null)
+                {
+                    return;
+                }
+                result.Add(item);
             }
         }
 
@@ -227,11 +207,16 @@ namespace Zipper.Pool
 
         public override void Dispose()
         {
-            Clear();
+            if (_disposed)
+                return;
+
+            Clear();//此时 _disposed 仍为 false，Clear 内部不会被短路（顺序不能颠倒）
             items.Clear();
             inactiveItems.Clear();
             allItems.Clear();
             clearPendingItems.Clear();
+
+            _disposed = true;
         }
     }
 }
