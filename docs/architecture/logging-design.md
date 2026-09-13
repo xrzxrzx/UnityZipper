@@ -162,6 +162,27 @@ _logger.Info($"加载 {prefab.name} 完成", nameof(Loader), context: prefab);
 | 不负责 | 容器注册（`builder.Register<IZLogger, ZLogger>()` 与 `.As<IZModuleBootstrap>()` 都在组装层 `GameLifetimeScope`） |
 | 与资源模块的关系 | 资源 Bootstrap 在 `ZBootPhase.Resources`（晚于 Logging）→ 它注入到的 `IZLogger` 必然已就绪 |
 
+**装配顺序与容器边界（路由器的 dispatcher 从哪来）**：
+
+```
+InitializeAsync:
+    _dispatcher = new ZMainThreadDispatcher();                   // ① 必须【主线程】创建（构造时记录主线程 ID）
+    _router     = new ZLogRouter(_dispatcher, sinks, level);      // ② 构造注入 dispatcher ← 路由器不查容器
+    var driver  = CreateDriverObject(); driver.Init(_dispatcher); // ③ 驱动对象持 dispatcher
+    _logger     = new ZLogger(_router);                           // ④ 日志器持 router
+```
+
+| 组件 | 进容器？ | 理由 |
+|---|---|---|
+| `IZLogger`（→ `ZLogger`） | ✅ **必须** | 其它模块唯一的日志入口 |
+| `ZLoggerBootstrap`（`IZModuleBootstrap`） | ✅ **必须** | 由总 Bootstrap 按阶段驱动 |
+| `ZMainThreadDispatcher` | ❌ **不进** | ① 构造必须在**主线程**（否则记录错主线程 ID）；② **Bootstrap 在容器 Build 之后运行**，此时无法再 `RegisterInstance`；③ 它是内部协作者 |
+| `ZLogRouter` / Sink（Console/File） | ❌ **不进** | 内部实现；注册等于给外部"绕过 `IZLogger` 改 Sink / 绕开级别控制"的越权口子 |
+
+> **原则**：**容器只装"对外服务"，不装"内部协作者"。**
+> **例外**：若将来**多个模块**都需要"把回调派发到主线程"，应抽成独立服务 `IZMainThreadDispatcher`（放 Core，惰性单例注册并在工厂里断言主线程），而不是让别的模块去拿日志的 dispatcher。现在只有一个使用者 → YAGNI，先不抽。
+> **可测性**：构造函数注入使 Router 可脱离容器单测（`new ZLogRouter(new FakeDispatcher(), sinks, ZLogLevel.Debug)`）。
+
 ---
 
 ## 6. 主线程分发
