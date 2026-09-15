@@ -20,7 +20,7 @@ namespace Zipper.Core.Logging.Sink
 
         public void Write(in ZLogEntry entry)
         {
-            string line = Format(entry);                     // "[12:00:01.123] [Zipper.Resources] 加载完成"
+            string line = LogFormatter.Format(entry);
             switch (entry.Level)
             {
                 case ZLogLevel.Warning: UnityEngine.Debug.LogWarning(line, entry.Context); break;
@@ -28,11 +28,6 @@ namespace Zipper.Core.Logging.Sink
                 case ZLogLevel.Fatal: UnityEngine.Debug.LogError(line, entry.Context); break;
                 default: UnityEngine.Debug.Log(line, entry.Context); break;
             }
-        }
-
-        private string Format(ZLogEntry entry)
-        {
-            return $"[{entry.Time:HH:mm:ss.fff}] [{entry.ClassName ?? "?"}|{entry.Member ?? "?"}:{entry.Line}] {(entry.Exception != null ? entry.Exception.Message : "")} {entry.Message}";
         }
 
         public void Dispose()

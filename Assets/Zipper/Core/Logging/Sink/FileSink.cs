@@ -138,7 +138,7 @@ namespace Zipper.Core.Logging.Sink
             }
 
             bool wasEmpty = _queue.IsEmpty;
-            _queue.Enqueue($"[{entry.Time:HH:mm:ss.fff}] [{entry.ClassName ?? "?"}|{entry.Member ?? "?"}:{entry.Line}] {(entry.Exception != null ? entry.Exception.Message : "")} {entry.Message}");
+            _queue.Enqueue(LogFormatter.Format(entry));
             if (wasEmpty)
                 _signal.Set();
 

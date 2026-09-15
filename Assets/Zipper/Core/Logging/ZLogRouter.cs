@@ -17,12 +17,12 @@ namespace Zipper.Core.Logging
             _mainThreadDispatcher = mainThreadDispatcher;
         }
 
-        public void Dispatch(ZLogLevel level, Exception exception, string className, string member, int line, string message, UnityEngine.Object context)
+        public void Dispatch(ZLogLevel level, Exception exception, string className, string member, string filePath, int line, string message, UnityEngine.Object context)
         {
             if (!IsEnable(level))
                 return;
 
-            var entry = new ZLogEntry(level, className, member, line, message, DateTime.Now, Thread.CurrentThread.ManagedThreadId, context, exception);
+            var entry = new ZLogEntry(level, className, member, filePath, line, message, DateTime.Now, Thread.CurrentThread.ManagedThreadId, context, exception);
 
             foreach (var sink in _sinks)
             {

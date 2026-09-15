@@ -1,10 +1,10 @@
 # Zipper 日志模块设计（ZLogger）
 
-> 状态：**v1.4 草稿，待审阅**
+> 状态：**v1.5 草稿，待审阅**
 > 定位：`Zipper.Core` 的日志模块 v1 设计定稿（取代 `core-design.md` §3 早期形态）。**只给设计思路与接口形态，不含实现代码**。
 > **实施归属**：AI 只负责架构设计与思路级伪代码；**代码实现由使用者完成**（`docs/standards/agent-role.md`）。
 > 关联：**`docs/architecture/bootstrap-design.md`（启动 / Bootstrap 机制——已从本文迁出）**、`docs/architecture/core-design.md`（Core 总览）、`docs/architecture/pool-manager-design.md`、`LocalNotes/logging-implementation-guide.md`（本地实现教程，不入库）
-> 变更记录：v1.0 初稿；v1.1 落实第二轮决策；v1.2 启动顺序改硬；v1.3 Bootstrap 位置约定；**v1.4 Bootstrap 机制整体迁出至 `bootstrap-design.md`**（本文只保留"日志模块如何接入启动"）。
+> 变更记录：v1.0 初稿；v1.1 落实第二轮决策；v1.2 启动顺序改硬；v1.3 Bootstrap 位置约定；**v1.4 Bootstrap 机制整体迁出至 `bootstrap-design.md`**（本文只保留"日志模块如何接入启动"）；**v1.5 输出前缀改两分支 + 新增 caller 第四件套 `filePath`（项目相对路径截断）+ 格式化集中到 `LogFormatter`**。
 
 ---
 
@@ -83,31 +83,40 @@ public interface IZLogger
     bool IsEnabled(ZLogLevel level);                       // 热路径前置判定
     void SetGlobalLevel(ZLogLevel level);                  // 运行时调级
 
-    void Debug  (string message, string className = null, [CallerMemberName] string member = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
-    void Info   (string message, string className = null, [CallerMemberName] string member = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
-    void Warning(string message, string className = null, [CallerMemberName] string member = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
-    void Error  (string message, Exception ex = null, string className = null, [CallerMemberName] string member = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
-    void Fatal  (string message, Exception ex = null, string className = null, [CallerMemberName] string member = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
+    void Debug  (string message, string className = null, [CallerMemberName] string member = null, [CallerFilePath] string filePath = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
+    void Info   (string message, string className = null, [CallerMemberName] string member = null, [CallerFilePath] string filePath = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
+    void Warning(string message, string className = null, [CallerMemberName] string member = null, [CallerFilePath] string filePath = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
+    void Error  (string message, Exception ex = null, string className = null, [CallerMemberName] string member = null, [CallerFilePath] string filePath = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
+    void Fatal  (string message, Exception ex = null, string className = null, [CallerMemberName] string member = null, [CallerFilePath] string filePath = null, [CallerLineNumber] int line = 0, UnityEngine.Object context = null);
 }
 ```
 
 **典型调用**：
 
 ```
-_logger.Info("加载完成", nameof(MyClass));                        // 自动带 成员名:行号
+_logger.Info("加载完成", nameof(MyClass));                        // 有 nameof → 前缀 [类|成员]
 _logger.Warning("句柄未释放", nameof(PoolManager), context: this);
-_logger.Error("加载失败", ex, nameof(ResourceService));
+_logger.Error("加载失败", ex);                                    // 无 nameof → 前缀退回 [文件:行|成员]
 ```
 
-**输出前缀格式**：`[14:32:07.123] [MyClass.SetupAsync:128] 加载完成`
+**输出前缀格式**（两条分支，两个 Sink 必须逐字一致）：
 
-### 3.2 caller 三件套
+| 分支 | 输出 |
+|---|---|
+| 传了 `nameof`（`className` 非空） | `[14:32:07.123] [MyClass|SetupAsync] 加载完成` —— **不输出行号与文件** |
+| 没传 `nameof` | `[14:32:07.123] [Assets/Zipper/Resources/ZResourceManager.cs|LoadAssetAsync:61] 加载完成` |
+
+### 3.2 caller 四件套
 
 | 参数 | 来源 | 成本 | 说明 |
 |---|---|---|---|
-| `className` | **调用方显式传 `nameof(类名)`** | 零（编译期常量） | 类名靠显式传（不用 `CallerFilePath` 硬解析）；忘了传就是 `null`（前缀缺类名） |
+| `className` | **调用方显式传 `nameof(类名)`** | 零（编译期常量） | **首选身份**：传了它就只输出"类名 + 成员"——类名比路径短、比行号耐久（换机器/挪目录/改代码都不影响） |
 | `member` | `[CallerMemberName]` 自动 | 零 | 在 lambda / 局部函数里会得到编译器生成名（如 `<SetupAsync>b__0`）——预期行为 |
-| `line` | `[CallerLineNumber]` 自动 | 零 | 定位到具体行，配合 member 足够精确 |
+| `filePath` | `[CallerFilePath]` 自动 | 零（编译期常量） | **兜底身份**：仅在没传 `nameof` 时输出；值是**编译机绝对路径**，输出前必须截到项目相对路径（`Assets/…`），规则见 §4.2 |
+| `line` | `[CallerLineNumber]` 自动 | 零 | 同样仅在没传 `nameof` 时输出（配合文件定位） |
+
+> 四个参数都在**调用点由编译器填充**，因此**属性必须声明在接口 `IZLogger` 上**（经接口调用时按接口声明取值；实现上重复声明只对"直连具体类型"的调用有意义）。
+> **v1.5 起撤销**"不用 `CallerFilePath`"的原决定：路径不再"硬解析类名"，而是**截断后作为兜底**出现——传了 `nameof` 时它一个字符都不输出。
 
 ---
 
@@ -121,7 +130,8 @@ ZLogEntry（只读结构，跨线程传递的就是它）
     string    Message;
     string    ClassName;         // 调用方显式传的类名（可为空）
     string    Member;            // 调用方成员名（自动）
-    int       Line;              // 行号（自动）
+    string    FilePath;          // 调用方文件（自动；编译机绝对路径，输出前需截断，见 §4.2）
+    int       Line;              // 行号（自动；仅在无 ClassName 时输出）
     DateTime  Time;
     int       ThreadId;
     UnityEngine.Object Context;  // 可选：Console 对象引用（见 §4.1）
@@ -145,6 +155,29 @@ ZLogEntry（只读结构，跨线程传递的就是它）
 _logger.Warning("对象池已满", nameof(Spawner), context: this);
 _logger.Info($"加载 {prefab.name} 完成", nameof(Loader), context: prefab);
 ```
+
+### 4.2 格式化：只有一份实现（`LogFormatter`）
+
+日志行的字符串构造集中在 `Zipper.Core.Logging.Sink/LogFormatter.cs` → `internal static class LogFormatter` 的 `Format(in ZLogEntry entry)`，**两个 Sink 都调它**。"两处格式必须逐字一致"是硬要求，共用一份实现是唯一能保证它不漂移的办法（此前两处已漂移过一次：Console 少了 `?? "?"` 兜底）。
+
+| 约束 | 原因 |
+|---|---|
+| **纯函数、无状态** | 两个 Sink 可能在不同线程同时调用 |
+| **不碰任何 Unity API** | `FileSink.RequiresMainThread = false`，而格式化发生在**生产者线程**（§8）→ 可能是后台线程 |
+| 只在需要时算 | `className` 非空时靠 `??` 短路，连路径截断都不做 |
+
+**路径截断规则**（`ShortenPath`）：
+
+| 输入 | 输出 |
+|---|---|
+| `D:\Works\Component Developer\Assets\Zipper\Pool\ZObjectPool.cs` | `Assets/Zipper/Pool/ZObjectPool.cs` |
+| `Assets/Zipper/X.cs`（已是相对路径） | 原样（空操作） |
+| `D:\Temp\SomeTool.cs`（不含 `Assets/`） | `SomeTool.cs`（退化为文件名） |
+| `null` / 空 | `null` → 前缀显示 `?` |
+
+顺序：① 分隔符统一成 `/`；② 从 `Assets/` 起截取；③ 无 `Assets/` 则取最后一段。
+
+**将来若两个 Sink 的格式要分叉**（Console 要短、文件要带线程 ID 等）：把 `LogFormatter` 改成**带选项的实例**（`LogFormatOptions { IncludeFilePath, IncludeThreadId, … }`），由 `ZLoggerBootstrapper` 造两个实例分别注入 `ConsoleSink` / `FileSink` 的构造函数（两者 ctor 本来就收参数）。现在用静态纯函数，正是因为"两处必须完全一致"这条硬约束；允许分叉时它就过时了。
 
 ---
 
@@ -296,7 +329,7 @@ ZLogRouter（实例）
 
 | Sink | RequiresMainThread | 职责 |
 |---|---|---|
-| `ZConsoleSink` | **true** | 映射 `Debug.Log/LogWarning/LogError`；前缀 `[时间] [类名.成员:行]`；传 `context` 支持双击跳转 |
+| `ZConsoleSink` | **true** | 映射 `Debug.Log/LogWarning/LogError`；前缀格式见 §3.1（有 `nameof` → `[类\|成员]`；无则 `[文件:行\|成员]`）；传 `context` 支持双击跳转 |
 | `ZFileSink` | false | 后台线程批量写；时间(500ms)/大小(16KB)双触发；`Error/Fatal` 立即刷；**按日期切分**（§7.2） |
 
 ### 7.1 必 flush 的时机（漏一个就丢日志）
@@ -350,7 +383,10 @@ ZLogRouter（实例）
 |---|---|---|
 | 运行时过滤 | 设全局 `Warning` 后调 `Info` / `Warning` | `Info` 不输出、`Warning` 输出 |
 | 前置判定零分配 | 关闭 `Debug`，调用点按纪律先 `IsEnabled` | Profiler 无字符串分配 |
-| caller 前缀 | 调 `Info("x", nameof(MyClass))` | 输出含 `MyClass.方法名:行号` |
+| caller 前缀（传了 nameof） | 调 `Info("x", nameof(MyClass))` | 输出 `[MyClass\|方法名]`——**不含行号与文件** |
+| caller 前缀（没传 nameof） | 调 `Info("x")` | 输出 `[Assets/…/Xxx.cs\|方法名:行号]`——**项目相对路径，不得出现绝对路径** |
+| 两 Sink 格式一致 | 同一个 `ZLogEntry` 分别过 `ConsoleSink` / `FileSink` | 两处拼出的字符串**逐字相同**（共用 `LogFormatter`，见 §4.2） |
+| 路径截断边界 | 路径不含 `Assets/`（如包内脚本） | 退化为文件名；空路径 → `?` |
 | context 关联 | 带 `context: this` 输出 | Console 该条右侧有对象引用，双击可 ping 到对象 |
 | 双 Sink | 写 100 条后退出 | Console（按门槛）与文件（按门槛）都有，文件含时间与 caller 前缀 |
 | 时间触发刷盘 | 写 1 条后等 1 秒（不退出） | 文件里已出现 |
@@ -370,7 +406,7 @@ ZLogRouter（实例）
 |---|---|---|
 | 日志风暴限流 | 是否要"同来源每秒最多 N 条" | v1 不做（先靠级别 + 调用点纪律）；确需时 v2 加 |
 | PlayerLoop 驱动 | 是否用 PlayerLoop 替换驱动对象 | 保持驱动对象（v1）；除非将来要去掉额外 GameObject |
-| `className` 是否强制 | 忘了传就缺类名 | 靠代码规范约束（每次传 `nameof(类型)`），不强制 |
+| `className` 是否强制 | 忘了传就退回 `文件:行号` | 靠代码规范约束（尽量每次传 `nameof(类型)`），**不强制**——忘了也不会缺信息，只是前缀更长 |
 | 文件阈值/保留 | 大小轮转、旧文件清理 | **不做**（既定决策）；仅提醒目录会增长 |
 | 调试模式 | 内存中保留最近 N 条（供监视器/面板查看） | 需要时再加（可选 Sink） |
 
@@ -380,6 +416,7 @@ ZLogRouter（实例）
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v1.5 | 2026-09-13 | **输出前缀改"两分支" + caller 第四件套 `filePath` + 格式化集中**：① 新增 `[CallerFilePath] string filePath`，打通 `IZLogger` → `ZLogger` → `ZLogRouter` → `ZLogEntry.FilePath`；② 输出规则——**传了 `nameof` 只输出 `[类\|成员]`（不再输出行号）**，没传则退回 `[项目相对路径\|成员:行号]`（`D:\…\Assets\Zipper\X.cs` → `Assets/Zipper/X.cs`；不含 `Assets/` 退化为文件名）；③ **撤销 v1.1 的"不用 `CallerFilePath`"决定**——原因（绝对路径 + 硬解析类名）已由"截断后仅作兜底"化解；④ **格式化集中到 `LogFormatter`**（`internal static` 纯函数，两个 Sink 共用一份实现，消除此前两处漂移），并写明约束（无状态/不碰 Unity API）与"将来分叉则改实例 + 构造注入"；⑤ §4 增 `FilePath` 字段与 §4.2；§10 验收新增 3 条（两分支前缀、两 Sink 逐字一致、截断边界）|
 | v1.4.1 | 2026-09-12 | 措辞同步：Core 的依赖边界更正为"**仅依赖 Unity + UniTask**（不引 VContainer / Addressables / R3）"——因为启动契约 `IZModuleBootstrap.InitializeAsync` 返回 `UniTask`（详见 `core-design.md` v0.9.3、`roadmap` v0.10） |
 | v1.4 | 2026-09-10 | **Bootstrap 机制整体迁出**：原文 §5「Bootstrap 分层」的全部内容（契约 `IZModuleBootstrap`/`ZBootPhase`、总 Bootstrap 阶段编排与四方案对照、位置约定、容器注册、`CancellationToken` 用法、失败策略、惰性初始化备选）迁移并扩展为独立文档 **`docs/architecture/bootstrap-design.md`（v1.0）**；本文 §5 仅保留"日志模块的启动接入"（阶段 = `Logging`、职责、收尾不绑 ct、位置、与资源模块的先后关系），其余章节编号不变 |
 | v1.3 | 2026-09-10 | 新增 §5.5 Bootstrap 位置约定（契约归 Core、模块 Bootstrap 归模块程序集、总编排与注册归组装层）※ 该节已随 v1.4 迁出 |

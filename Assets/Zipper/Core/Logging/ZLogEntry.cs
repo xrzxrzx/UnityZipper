@@ -7,6 +7,7 @@ namespace Zipper.Core.Logging
         public readonly ZLogLevel Level;
         public readonly string ClassName;
         public readonly string Member;
+        public readonly string FilePath;
         public readonly int Line;
         public readonly string Message;
         public readonly DateTime Time;
@@ -14,12 +15,13 @@ namespace Zipper.Core.Logging
         public readonly UnityEngine.Object Context;
         public readonly Exception Exception;
 
-        public ZLogEntry(ZLogLevel level, string className, string member, int line, string message, DateTime time,
+        public ZLogEntry(ZLogLevel level, string className, string member, string filePath, int line, string message, DateTime time,
                          int threadId, UnityEngine.Object context, Exception exception = null)
         {
             Level = level;
             ClassName = className;
             Member = member;
+            FilePath = filePath;
             Line = line;
             Message = message;
             Time = time;
