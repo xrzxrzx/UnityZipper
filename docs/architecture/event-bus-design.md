@@ -1,6 +1,6 @@
 # Zipper 事件总线设计（EventBus）
 
-> 状态：**v0.4 草案，待审阅**
+> 状态：**v0.5.1 草案，待审阅**
 > 定位：`IZEventBus` / `ZEventBus`（`Zipper.Core.Events`）的**契约与机制设计**——订阅凭据、通道结构、分发语义、生命周期、装配、R3 桥。**只给设计思路与思路级伪代码，不含实现代码**。
 > 实施归属：AI 只负责架构设计与思路级伪代码；**代码实现由使用者完成**（`docs/standards/agent-role.md`）。
 > 关联：`docs/architecture/core-design.md` §4.3（决策来源：单实现 + R3 桥、「为什么不做 R3 版总线」五条依据）、`docs/architecture/logging-design.md`（`IZLogger`、主线程判定）、`docs/architecture/bootstrap-design.md`（装配与阶段）、`docs/standards/naming-convention.md`、`docs/planning/technical-roadmap.md`
@@ -65,74 +65,84 @@ core 是通过 NuGet 落在 `Assets/Packages/` 的**预编译 DLL**，而 `Zippe
 public interface IZEventBus : IDisposable
 {
     // ① 匿名订阅：返回"可释放的订阅凭据"，凭据 Dispose 即退订（幂等）
-    IDisposable Subscribe<T>(Action<T> handler);
+    IDisposable Subscribe<T>(Action<T> action) where T : class;
 
-    // ② 收件人订阅：recipient 只用于"批量注销"记账，不改变 handler 签名
-    IDisposable Subscribe<T>(object recipient, Action<T> handler);
+    // ② 收件人订阅：subscriber 只用于"批量注销"记账，不改变 handler 签名
+    IDisposable Subscribe<T>(object subscriber, Action<T> action) where T : class;
 
-    // ③ 注销该收件人的全部订阅（幂等）；recipient 为 null → 抛 ArgumentNullException
-    void UnregisterAll(object recipient);
+    // ③ 按委托取消：移除所有与该委托相等的订阅，返回是否移除了至少一个
+    //    ⚠️ 要求"同一个委托实例"；两处分别重写的捕获型 lambda 匹配不上 → 记 Warning
+    bool Unsubscribe<T>(Action<T> action) where T : class;
 
-    // ④ 按委托取消：移除所有与该委托相等的订阅，返回是否移除了至少一个
-    //    ⚠️ 要求"同一个委托实例"（方法组/静态/无捕获 lambda 天然满足）；两处分别重写的捕获型 lambda 匹配不上 → 记 Warning
-    bool Unsubscribe<T>(Action<T> handler);
+    // ④ 注销该收件人的全部订阅（幂等）；subscriber 为 null → 记 Warning 并忽略（防误清匿名订阅）
+    void UnsubscribeAll(object subscriber);
 
-    // 发布：同步、立即分发（v1 为 void，见 §13 D2）
-    void Publish<T>(in T evt);
+    // 发布：同步、立即分发
+    void Publish<T>(in T @event) where T : class;
 
-    // 调试/监控（可选，见 §10）
-    int SubscriberCount<T>();
+    // 调试/监控：状态快照 DTO（照对象池 ZPoolState/ZPoolsState 的形状，见 §10）
+    ZEventsState GetState();
 }
 ```
 
+> **v0.5 契约变更（对齐已实现形态）**：`recipient` 统一改称 **`subscriber`**（代码与文档同一个词，消除 B8 那类"一物两名"）；`UnregisterAll` 改名 **`UnsubscribeAll`**（更直白）；`int SubscriberCount<T>()` 由 **`ZEventsState GetState()`** 取代（照对象池的 DTO 风格，见 §10）。
+>
+> **`where T : class`（v0.5 定案：事件必须是引用类型）**：原稿"不加约束、载荷优先 `readonly struct`"**作废**。代价与随之而来的约定：① 每次发布都需要一个事件对象（构造/复用/池化由调用方负责；**总线自身仍然零分配**）；② 事件类型建议 `sealed` + 只读成员，避免"发布后被人改"；③ **struct 事件不支持**。
+
 > **两条订阅路径的分工**（硬规则）：
-> - **有生命周期的对象**（模块服务、MonoBehaviour 面板）→ 走 ②，注销靠 ③ 一句话；
+> - **有生命周期的对象**（模块服务、MonoBehaviour 面板）→ 走 ②，注销靠 ④ 一句话；
 > - **生命周期不由自己决定或很短的对象**（R3 桥接、测试、`using` 块）→ 走 ①，靠凭据 Dispose。
 >
-> 为什么 handler 签名里**不**回传 recipient（工具包那种 `Action<object,T>`）：见附录 A。
+> 为什么 handler 签名里**不**回传 subscriber（工具包那种 `Action<object,T>`）：见附录 A。
 
 > **三种取消方式**（别用错）：
 >
 > | 想做的事 | 用什么 | 可靠性 |
 > |---|---|---|
 > | 取消**某一个**订阅 | 任何 `Subscribe` 返回的**凭据** `Dispose()`（两条订阅路径的返回值都能用） | ✅ 结构上必然成立 |
-> | 取消**某个对象的全部**订阅 | `UnregisterAll(recipient)` | ✅ 结构上必然成立 |
-> | 按 handler 取消（熟悉的 `-=` 手感） | `Unsubscribe<T>(handler)` | ⚠️ 可靠的前提是"**同一个委托实例**"：方法组 / 静态方法 / 无捕获 lambda 每次求值都等价，没问题；**在订阅处和退订处各重写一遍的捕获型 lambda**（`m => OnX(m, _local)`）会新建闭包对象（Target 不同）→ **匹配不上 → 记 Warning**（不是静默失败）。把 lambda 存成变量、退订时传同一个实例也可以 |
+> | 取消**某个对象的全部**订阅 | `UnsubscribeAll(subscriber)` | ✅ 结构上必然成立 |
+> | 按 handler 取消（熟悉的 `-=` 手感） | `Unsubscribe<T>(action)` | ⚠️ 可靠的前提是"**同一个委托实例**"：方法组 / 静态方法 / 无捕获 lambda 每次求值都等价，没问题；**在订阅处和退订处各重写一遍的捕获型 lambda**（`m => OnX(m, _local)`）会新建闭包对象（Target 不同）→ **匹配不上 → 返回 false + 记 Warning**（不是静默失败）。把 lambda 存成变量、退订时传同一个实例也可以 |
 >
-> - `Unsubscribe` 语义：移除**所有**与该委托相等的订阅（同一 handler 注册两次不会留僵尸），与订阅路径无关（收件人订阅只要 handler 相等也会被移除）；
+> - `Unsubscribe` 语义：移除**所有**与该委托相等的订阅（同一 handler 注册两次不会留僵尸），与订阅路径无关（收件人订阅只要 handler 相等也会被移除）；**返回 `bool`**，未命中时记 Warning——因为"能不能退订"是调用方唯一能拿到的反馈；
 > - 在**两个地方分别重写**捕获型 lambda 的订阅，请用**凭据**或**收件人**路径注销，不要用 `Unsubscribe`。
 
 思路级伪代码（设计级，非最终实现）：
 
 ```
-Subscribe<T>(recipient, handler):
-    handler 为 null → 抛 ArgumentNullException（编程错误，早失败）
-    recipient 为 null → 抛 ArgumentNullException（否则 UnregisterAll(null) 会误清匿名订阅）
-    已 Dispose → 返回一个"已释放的空凭据"（不抛，关闭期宽容，见 §5.3）
-    取（或创建）T 的通道 → 把 handler 包装成 Subscription（记下 Recipient）加入通道
-    → 返回该 Subscription（Dispose 时从通道移除并标记 IsDisposed）
+Subscribe<T>(subscriber, action):
+    action 为 null → 抛 ArgumentNullException（编程错误，早失败）
+      （否则 null handler 会进通道，之后每次发布都记一条 Error —— 错的地方离现场太远）
+    subscriber 为 null = **匿名订阅**（合法；单参重载就是这么调它的）
+    — 只有 UnsubscribeAll(null) 需要守卫（见下）
+    非主线程 → 记 Error 并返回"空凭据"（**共享单例，不返回 null**，否则调用方 Dispose 时 NRE）
+    已 Dispose → 返回"空凭据"（一个共享的单例，Dispose 空实现；不抛，关闭期宽容，见 §5.3）
+    取（或创建）T 的通道 → 把 action 包装成 Subscription（记下 subscriber）加入通道
+    → 返回该 Subscription（Dispose 时由通道完成"标记 + 摘除"）
 
-UnregisterAll(recipient):
-    recipient 为 null → 抛 ArgumentNullException
-    遍历所有通道 → 用**引用相等**挑出 Recipient 与之相同的 Subscription
+UnsubscribeAll(subscriber):
+    subscriber 为 null → 记 Warning 并直接返回（**不能**当成"清理匿名订阅"）
+    非主线程 → 记 Error 并忽略
+    遍历所有通道 → 用**引用相等**挑出 Subscriber 与之相同的 Subscription
       → 标记 IsDisposed + 从数组移除（copy-on-write，同 §3.2）
     （幂等：没有匹配项时就是空操作）
 
-Unsubscribe<T>(handler):
-    handler 为 null → 抛 ArgumentNullException
-    取 T 的通道（不存在 → 记 Warning 后返回 false）
+Unsubscribe<T>(action):
+    action 为 null → 抛 ArgumentNullException
+    非主线程 → 记 Error 并返回 false
+    取 T 的通道：不存在 → 记 Warning 后返回 false
     → 用**委托相等**（Delegate.Equals：Target + Method）挑出全部匹配的 Subscription
       → 标记 IsDisposed + 从数组移除
     一个都没匹配到 → 记 Warning（"未找到匹配订阅：可能是两处分别重写的捕获型 lambda，或已注销"）并返回 false
     （语义：移除全部匹配项；与订阅路径无关）
 
-Publish<T>(evt):
+Publish<T>(event):
     已 Dispose → 记一次 Debug 后返回
     非主线程 → 记 Error 后返回（§4.2）
-    取 T 的通道；无订阅者 → 直接返回（零分配路径）
+    取 T 的通道：**不存在 → 直接返回，不记任何日志**（"没人订阅"是最常见的情况，不是异常；
+      在这里刷 Warning 会破坏"零分配发布"这条验收，还会刷屏）
     对通道当前订阅者数组做遍历（数组即快照，见 §3.2）
       → 每个元素先查 IsDisposed（即时退订语义）
-      → try/catch 调用；异常记日志后继续下一个
+      → try/catch 调用；异常记 Error 后继续下一个（§3.4）
 ```
 
 ### 2.2 命名与类型约定
@@ -143,9 +153,9 @@ Publish<T>(evt):
 | 凭据具体类型 | `Subscription`（**不加 Z 前缀**），`internal`，实现 `IDisposable` | 内部机制类型不加前缀；接口只暴露 `IDisposable`，调用方看不到该类型名 |
 | 通道类型 | `EventChannelBase`（非泛型基类）+ `EventChannel<T>`，均 `internal` | 同上；基类只为"批量清空"提供入口 |
 | 事件类型 | 框架自带事件：`Z*` + **过去式**（`ZResourceLoaded`）；**业务事件按业务命名，不加 Z** | `naming-convention.md` §1/§4（`*` 前缀是"框架对外概念"，业务事件不属于框架品牌 API） |
-| 载荷形态 | **优先 `readonly struct`，只放纯数据**（id、枚举、数值、Unity 对象引用），不放模块接口/句柄 | 避免每次发布堆分配；避免"发布后发布者继续改对象"的共享可变状态 |
-| 接口泛型约束 | **不加** `where T : struct` 等约束 | 约束会把"带引用字段的事件"逼成结构体包装，且无谓限制调用方；用约定而非编译器约束（与项目其它模块一致） |
-| 收件人 `recipient` | **非 null 的引用类型**，传"这个订阅的生命周期归谁管"的那个对象（即会在 `OnDestroy`/`Dispose` 里清理它的对象）；**禁止值类型**——会被装箱，注册与 `UnregisterAll` 各装箱一次、引用不同 → **永远匹配不上、静默泄漏**；**不要求**等于 `handler.Target`（捕获型 lambda 的 Target 是编译器生成的闭包类） | `UnregisterAll` 靠**引用相等**匹配，键必须是稳定的对象身份；语义约定见 §5.1 |
+| 载荷形态 | **必须是引用类型**（`where T : class`）——建议 `sealed` + 只读成员、只放纯数据（id、枚举、数值、Unity 对象引用），不放模块接口/句柄；**struct 事件不支持**（v0.5 定案，见 §2.1） | 引用类型便于复用/池化；只读成员避免"发布后发布者继续改对象"的共享可变状态 |
+| 接口泛型约束 | **`where T : class`**（v0.5 定案：仅支持引用类型事件） | 原稿"不加约束"作废；代价是每次发布需要一个事件对象（构造/复用由调用方负责，**总线自身仍零分配**） |
+| 收件人 `subscriber` | **非 null 的引用类型**，传"这个订阅的生命周期归谁管"的那个对象（即会在 `OnDestroy`/`Dispose` 里清理它的对象）；**禁止值类型**——会被装箱，注册与 `UnsubscribeAll` 各装箱一次、引用不同 → **永远匹配不上、静默泄漏**；**不要求**等于 `handler.Target`（捕获型 lambda 的 Target 是编译器生成的闭包类） | `UnsubscribeAll` 靠**引用相等**匹配，键必须是稳定的对象身份；语义约定见 §5.1 |
 
 ### 2.3 本文与 `core-design.md` §4.3 的差异（**需同步或明确拒绝**）
 
@@ -154,9 +164,9 @@ Publish<T>(evt):
 | 1 | "线程：默认主线程发布；**后台线程发布经主线程泵**" | **v1 只允许主线程发布**；非主线程 → 记 Error 并丢弃。需要跨线程时由调用方自己 `SwitchToMainThread` 后再发布 | 若 Publish 自动 marshal，则"主线程发布=立即分发、后台线程发布=延迟分发"，**同一 API 两种时序语义**，订阅方无法推理；而日志可以这么做是因为它是 fire-and-forget，事件不是。见 §4.2 |
 | 2 | "发布时对订阅者做**快照**" | 细化为**copy-on-write 数组 + 逐元素 `IsDisposed` 检查**（快照保证遍历安全，`IsDisposed` 保证**退订立即生效**） | 只做快照会出现"退订后本轮仍收到一次"的经典意外（对象已销毁仍被回调）；逐元素检查成本可忽略 |
 | 3 | 未明确"回调内订阅"的可见性 | 明确：**回调内新订阅 → 本轮不收到，下轮起生效** | 需要一个确定规则，否则行为依赖实现细节 |
-| 4 | "Scope 关闭统一释放（防泄漏兜底）" | v1 **不引入总线侧的 Scope 收集**：注销由持有方负责——收件人路径在 `Dispose`/`OnDestroy` 里 `UnregisterAll(this)`（§5.1），匿名路径靠凭据 `Dispose` | 总线替别人管生命周期会引入"谁负责"的模糊地带；项目已有"谁签发谁释放"的文化（`AssetHandle`）。采纳收件人路径后，"凭据集合类型"这个需求自动消解（§13.1） |
+| 4 | "Scope 关闭统一释放（防泄漏兜底）" | v1 **不引入总线侧的 Scope 收集**：注销由持有方负责——收件人路径在 `Dispose`/`OnDestroy` 里 `UnsubscribeAll(this)`（§5.1），匿名路径靠凭据 `Dispose` | 总线替别人管生命周期会引入"谁负责"的模糊地带；项目已有"谁签发谁释放"的文化（`AssetHandle`）。采纳收件人路径后，"凭据集合类型"这个需求自动消解（§13.1） |
 | 5 | 未涉及 | 补充**事件类型放哪**的两级规则（§9） | §4.3 §6 待办里的"事件类型集中放在哪个命名空间/目录" |
-| 6 | 未涉及 | **新增"收件人维度"**（`Subscribe<T>(recipient, handler)` + `UnregisterAll`） | 纯增量能力，§4.3 无需修订；它把"订阅泄漏"从"靠记性保存凭据"变成"一句话注销"，理由见附录 A |
+| 6 | 未涉及 | **新增"收件人维度"**（`Subscribe<T>(subscriber, action)` + `UnsubscribeAll`） | 纯增量能力，§4.3 无需修订；它把"订阅泄漏"从"靠记性保存凭据"变成"一句话注销"，理由见附录 A |
 | 7 | 未涉及（§4.3 只提"v1 明确不做：优先级、粘性、异步分发……"） | 明确**不采纳** CommunityToolkit.Mvvm messenger 的 class 信封 / 弱引用 / 请求-应答 / MVVM 值变化语义 / `IRecipient` 声明式注册 | 见附录 A（逐条理由） |
 
 > 若采纳本文 §4.2 与 §4.3 不同，`core-design.md` §4.3 需同步修订（或把"后台线程经泵"标为二期）。
@@ -185,21 +195,28 @@ EventChannel<T> : EventChannelBase
 ```
 Subscription（internal sealed, IDisposable）
  ├─ Action<T> Handler
- ├─ object Recipient          // 收件人（匿名订阅为 null），只用于 UnregisterAll 记账
+ ├─ object Subscriber         // 收件人（匿名订阅为 null），只用于 UnsubscribeAll 记账
+ ├─ EventChannel<T> _channel  // ← 反向边：所属通道（"我没了"时通知它）
  └─ bool IsDisposed           // 退订标记，发布时逐元素检查
 
-Subscribe：新建 Subscription（记下 Recipient）→ 数组整体复制 + 追加 → 替换 _subscriptions
-退订（Dispose）：标记 IsDisposed=true → 数组整体复制 + 移除 → 替换 _subscriptions
-UnregisterAll(recipient)：所有通道里引用相等匹配的 Subscription → 同上（批量）
-Unsubscribe<T>(handler)：同一通道里**委托相等**（Target + Method）匹配的 Subscription（可能多个）→ 同上
+Subscribe：新建 Subscription（记下 Subscriber + 通道）→ 数组整体复制 + 追加 → 替换 _subscriptions
+退订（Dispose）：标记 IsDisposed=true → 调用 _channel.Remove(this)（**由通道完成摘除**）
+UnsubscribeAll(subscriber)：所有通道里引用相等匹配的 Subscription → 标记 + 摘除（批量）
+Unsubscribe<T>(action)：同一通道里**委托相等**（Target + Method）匹配的 Subscription（可能多个）→ 同上
 Publish：直接遍历当前的 _subscriptions（**不分配、不复制**）
 ```
 
+> **反向边是必需的，但要"指向通道、而不是直接改通道的存储"**（这是最容易被写错的一处）：
+> `Subscription` 只声明"我不再有效"，**由通道负责**把它从数组里摘掉 —— 通道必须提供 `Remove(Subscription<T> target)`（按**身份**匹配）这个重载。
+> ⚠️ 如果只提供 `Remove(object subscriber)`（按收件人匹配），`_channel.Remove(this)` 会被编译器绑到**那个重载**上 → 拿"订阅对象"去和"收件人对象"比 → **永远匹配不上，静默什么都删不掉**（表现为：退订后计数不减、数组只增不减）。
+
 - 收益：**发布零分配**（项目对 GC 敏感：池/资源/日志都按这个标准设计）；订阅/退订是 O(n) 复制 —— 总线定位是"跨模块低频通知"，订阅者数量小，代价可接受。
 - 同时满足两件事：遍历安全（数组引用不可变）+ 退订立即生效（`IsDisposed`）。
-- `UnregisterAll` 是 O(通道数 × 订阅数) 的扫描；`Unsubscribe` 是单通道扫描。两者都是低频操作，**不建索引**（索引会引入第二份需要同步维护的状态）。
-- **`Unsubscribe` 的匹配是 `Delegate.Equals`（Target + Method）**：同一个委托实例（或等价的方法组 / 静态方法 / 无捕获 lambda）能匹配上；**在两处分别重写的捕获型 lambda** 会新建闭包 → 匹配不上 → 记 Warning（§2.1 的取消方式表）。`UnregisterAll` 没有这个陷阱。
-- **收件人比较必须用引用相等**（`ReferenceEquals`，或把字段声明为 `object` 后用 `==`）。**不要**把 `Recipient` 声明成 `UnityEngine.Object` 再比较 —— Unity 重载的 `==` 会把"已销毁"的伪 null 参与进来，语义就不是"同一个对象"了。
+- `UnsubscribeAll` 是 O(通道数 × 订阅数) 的扫描；`Unsubscribe` 是单通道扫描。两者都是低频操作，**不建索引**（索引会引入第二份需要同步维护的状态）。
+- **`Unsubscribe` 的匹配是 `Delegate.Equals`（Target + Method）**：同一个委托实例（或等价的方法组 / 静态方法 / 无捕获 lambda）能匹配上；**在两处分别重写的捕获型 lambda** 会新建闭包 → 匹配不上 → 返回 `false` + 记 Warning（§2.1 的取消方式表）。`UnsubscribeAll` 没有这个陷阱。
+- **收件人比较必须用引用相等**（`ReferenceEquals`，或把字段声明为 `object` 后用 `==`）。**不要**把 `Subscriber` 声明成 `UnityEngine.Object` 再比较 —— Unity 重载的 `==` 会把"已销毁"的伪 null 参与进来，语义就不是"同一个对象"了。
+- **增删都走"复制出新数组 → 替换字段"**（v0.5.1 更正）：`Array.Resize(ref _subscriptions, …)` 本身就是"分配新数组 + 复制 + 把新引用写回字段"，**语义上就是 copy-on-write**，用它没问题 —— 我 v0.5 初稿把它写成"原地改写、要避免"是**错的**（原地扩容在 .NET 里不存在）。真正要守住的只有一条：**不要在"正在被遍历"的那个数组上原地改元素**，否则"数组即快照"就被破坏。
+- **`Remove(...)` 类方法要返回"移除了几个"**（v0.5.1 补）：否则上层 `Unsubscribe` 只能无条件 `return true` → **未命中却谎报成功**（比静默更糟）。约定：`EventChannel<T>.Remove(Action<T>)` 返回 `int`，`ZEventBus.Unsubscribe` 据此决定返回 `true` 还是"记 Warning + 返回 `false`"。
 
 ### 3.3 发布语义（精确规则）
 
@@ -210,8 +227,8 @@ Publish：直接遍历当前的 _subscriptions（**不分配、不复制**）
 | 回调内 **订阅** 其他类型事件 | 立即生效（该类型本轮尚无遍历在进行） |
 | 回调内 **退订自己** | 立即生效（`IsDisposed` 检查），自己不再被本轮后续调用 |
 | 回调内 **退订别人** | 立即生效；若该订阅者尚未被本轮调用，则**不再收到**本轮事件 |
-| 回调内 **`UnregisterAll(自己)`** | 等价于退订自己的全部订阅：本轮后续不再收到（即使本类型还有别的 handler） |
-| 回调内 **`UnregisterAll(别人)`** | 立即生效；对方尚未被本轮调用则不再收到本轮事件 |
+| 回调内 **`UnsubscribeAll(自己)`** | 等价于退订自己的全部订阅：本轮后续不再收到（即使本类型还有别的 handler） |
+| 回调内 **`UnsubscribeAll(别人)`** | 立即生效；对方尚未被本轮调用则不再收到本轮事件 |
 | 回调内 **再发布**（重入） | 允许，深度优先、同步完成；顺序 = 内层先跑完再回到外层剩余订阅者 |
 | 重入深度 | 不做限制；**风险提示**：A 事件的处理里发 A 事件 = 无限递归 → 纪律见 §4.5 |
 
@@ -238,7 +255,7 @@ Publish：直接遍历当前的 _subscriptions（**不分配、不复制**）
 | 调用 | 允许线程 | 违规时 |
 |---|---|---|
 | `Subscribe`（两种重载） | **仅主线程** | 记 Error 并忽略本次操作 |
-| `UnregisterAll` / `Unsubscribe` / 凭据 `Dispose` | **仅主线程** | 记 Error 并忽略本次操作 |
+| `UnsubscribeAll` / `Unsubscribe` / 凭据 `Dispose` | **仅主线程** | 记 Error 并忽略本次操作 |
 | `Publish` | **仅主线程** | 记 Error 并**丢弃**该次发布 |
 | `Dispose`（总线本身） | 容器释放（主线程） | — |
 
@@ -283,12 +300,12 @@ Publish：直接遍历当前的 _subscriptions（**不分配、不复制**）
 
 ### 5.1 谁负责注销（两条路径 + 三类对象）
 
-**原则**：有生命周期的对象走"收件人 + `UnregisterAll`"，其余走"凭据 `Dispose`"。
+**原则**：有生命周期的对象走"收件人 + `UnsubscribeAll`"，其余走"凭据 `Dispose`"。
 
 | 对象形态 | 订哪种 | 注销做法 | 额外成本 |
 |---|---|---|---|
-| **容器托管的单例服务**（资源/池/音频/事件） | 收件人 | 在自身 `Dispose()` 里 `UnregisterAll(this)` —— VContainer 本来就会调 `Dispose` | **零** |
-| **场景对象**（MonoBehaviour 面板/View） | 收件人 | 在 `OnDestroy()` 里 `UnregisterAll(this)` | 一句 |
+| **容器托管的单例服务**（资源/池/音频/事件） | 收件人 | 在自身 `Dispose()` 里 `UnsubscribeAll(this)` —— VContainer 本来就会调 `Dispose` | **零** |
+| **场景对象**（MonoBehaviour 面板/View） | 收件人 | 在 `OnDestroy()` 里 `UnsubscribeAll(this)` | 一句 |
 | **R3 桥 / 测试 / 临时逻辑** | 匿名 | 凭据 `Dispose` / `using`（R3 侧还可 `AddTo(this)`，见 §7.3） | 无 |
 
 服务与场景对象的典型写法（**推荐形态**）：
@@ -304,7 +321,7 @@ public sealed class ShopService : IDisposable
         _bus.Subscribe<ZResourceLoaded>(this, OnResourceLoaded);   // 实例方法组，一眼看出归属
     }
     void OnResourceLoaded(ZResourceLoaded e) { ... }
-    public void Dispose() => _bus.UnregisterAll(this);             // 加多少订阅都覆盖
+    public void Dispose() => _bus.UnsubscribeAll(this);            // 加多少订阅都覆盖
 }
 
 // MonoBehaviour 面板
@@ -312,7 +329,7 @@ void Awake()
 {
     _bus.Subscribe<ZSceneChanged>(this, OnSceneChanged);
 }
-void OnDestroy() => _bus.UnregisterAll(this);
+void OnDestroy() => _bus.UnsubscribeAll(this);
 ```
 
 **只想取消其中一个订阅**（其余保留）：直接 `Dispose` 那个订阅返回的凭据 —— **两条订阅路径都一样**：
@@ -327,24 +344,24 @@ IDisposable tempSub = _bus.Subscribe<ZResourceLoaded>(OnLoaded);
 tempSub.Dispose();
 
 // 混用安全：先批量再单个，都是幂等的
-_bus.UnregisterAll(this);
+_bus.UnsubscribeAll(this);
 hotkeySub.Dispose();
 
-// 既要闭包、又想能批量注销 → 用收件人重载（recipient 与 handler 形态无关）
+// 既要闭包、又想能批量注销 → 用收件人重载（subscriber 与 handler 形态无关）
 _bus.Subscribe<ZResourceLoaded>(this, m => OnLoaded(m, _cache));
 ```
 
 > 想在**退订点重写 handler**（连字段都不存）就用 `Unsubscribe<T>(handler)`——但只对方法组 / 静态方法 / 无捕获 lambda 可靠（§2.1 的取消方式表）。
 
-**纪律（要写进编码纪律）**：凡是用了收件人订阅的类，**必须在 `Dispose`/`OnDestroy` 里 `UnregisterAll(this)`**——否则总线会通过 `Recipient` 强引用钉住它（见 §5.2）。
+**纪律（要写进编码纪律）**：凡是用了收件人订阅的类，**必须在 `Dispose`/`OnDestroy` 里 `UnsubscribeAll(this)`**——否则总线会通过 `Subscriber` 强引用钉住它（见 §5.2）。
 
 **不做的自动化**（讨论结论，理由见附录 B）：`this` 的自动装配（基类 / 扩展方法 receiver / 反射发现）一律不做；`CancellationToken` 重载（配 `destroyCancellationToken` 自动注销）暂不做，留口，见 §13 D12。
 
 ### 5.2 泄漏的三种典型场景（文档要写进编码纪律）
 
-1. **忘记 `UnregisterAll`（采用收件人路径后的头号坑）**：总线持有 `Recipient` 强引用 → 该对象（含 MonoBehaviour）不会被 GC；若它还监听，销毁后仍会收到回调。**这是选定"强引用 + 显式注销"方案必须付的代价**（弱引用能掩盖这个问题，但代价是问题更难查，且 Unity 下本就不可靠，见附录 A）。
+1. **忘记 `UnsubscribeAll`（采用收件人路径后的头号坑）**：总线持有 `Subscriber` 强引用 → 该对象（含 MonoBehaviour）不会被 GC；若它还监听，销毁后仍会收到回调。**这是选定"强引用 + 显式注销"方案必须付的代价**（弱引用能掩盖这个问题，但代价是问题更难查，且 Unity 下本就不可靠，见附录 A）。
 2. **匿名订阅忘记释放凭据**：等价的老问题；R3 桥那类由 R3 的 `IDisposable` 负责，一般不会漏。
-3. **重复注销**：`UnregisterAll` 与凭据 `Dispose` 都必须幂等（前者无匹配项即空操作，后者标记 `IsDisposed` 后直接返回）。
+3. **重复注销**：`UnsubscribeAll` 与凭据 `Dispose` 都必须幂等（前者无匹配项即空操作，后者标记 `IsDisposed` 后直接返回）。
 
 ### 5.3 总线自身的 Dispose
 
@@ -450,28 +467,39 @@ public static class ZEventBusObservableExtensions
 | 11 | 非主线程发布 | 记 Error、该次事件被丢弃、无异常 |
 | 12 | `Dispose` 总线后发布/订阅 | no-op / 返回已释放凭据，均不抛 |
 | 13 | 凭据重复 `Dispose` | 幂等，不抛 |
-| 14 | `SubscriberCount<T>` | 与订阅数一致、退订后递减 |
-| 15 | **R3 桥**：`bus.AsObservable<T>()` 退订 | 同时释放总线凭据（`SubscriberCount` 归零） |
+| 14 | `GetState()` 计数 | 与订阅数一致、退订后递减（`TotalSubscribers` 与按类型的 `SubscriberCount` 都要对） |
+| 15 | **R3 桥**：`bus.AsObservable<T>()` 退订 | 同时释放总线凭据（订阅数归零） |
 | 16 | **R3 桥**：桥后加算子（如 `Debounce`） | 不影响其他订阅者收到的原始事件序列 |
-| 17 | `UnregisterAll(a)` | 只清 `a` 的全部订阅；**不影响他人**（含 handler 同名但收件人不同的订阅） |
-| 18 | `UnregisterAll(a)` 重复调用 | 幂等，不抛 |
-| 19 | `UnregisterAll(null)` | 抛 `ArgumentNullException` |
-| 20 | 匿名订阅 + `UnregisterAll(任意对象)` | 匿名订阅**不受影响**（仍是各自的凭据管） |
-| 21 | 收件人订阅在回调里 `UnregisterAll(自己)` | 本轮后续不再收到（与 §3.3 一致） |
-| 22 | `SubscriberCount<T>` | 在两种路径混合时计数正确；`UnregisterAll` 后相应递减 |
+| 17 | `UnsubscribeAll(a)` | 只清 `a` 的全部订阅；**不影响他人**（含 handler 同名但收件人不同的订阅） |
+| 18 | `UnsubscribeAll(a)` 重复调用 | 幂等，不抛 |
+| 19 | `UnsubscribeAll(null)` | **记 Warning 并忽略**（不误清匿名订阅、不抛） |
+| 20 | 匿名订阅 + `UnsubscribeAll(任意对象)` | 匿名订阅**不受影响**（仍是各自的凭据管） |
+| 21 | 收件人订阅在回调里 `UnsubscribeAll(自己)` | 本轮后续不再收到（与 §3.3 一致） |
+| 22 | `GetState()` 混合计数 | 两种路径混用时计数正确；`UnsubscribeAll` 后相应递减 |
 | 23 | 单个凭据 `Dispose`（两条订阅路径各测一次） | **只取消自己**；同一收件人的其他订阅、以及他人的订阅都不受影响 |
 | 24 | `Unsubscribe<T>(handler)`（方法组） | 移除成功、返回 `true`；**同一 handler 注册两次时全部移除**（不留僵尸） |
 | 25 | `Unsubscribe<T>(捕获型 lambda)`（订阅与退订处**各重写一遍**） | 返回 `false` 且**记一条 Warning**（不静默） |
-| 26 | `Unsubscribe<T>` 未命中 / 该类型通道不存在 | 返回 `false` + Warning；不抛异常 |
-| 27 | 值类型作为 `recipient` | 被拒绝（调试期检查或直接抛），**不会**出现"注册成功但 `UnregisterAll` 永远匹配不上"的静默泄漏 |
+| 26 | **`Unsubscribe<T>` 未命中**（通道存在但 handler 不匹配） | 返回 `false` + Warning；**绝不能谎报 `true`**（`Remove` 要返回移除个数） |
+| 27 | 值类型作为 `subscriber` | 被拒绝（调试期检查或直接抛），**不会**出现"注册成功但 `UnsubscribeAll` 永远匹配不上"的静默泄漏 |
 
 ---
 
-## 10. 调试与可观测（可选，建议延后）
+## 10. 状态查询与可观测（`GetState()` 已提供；调试视图延后）
 
-- 调试模式下记录**最近 N 条事件**（环形缓冲，类型 + 时间 + 订阅者数）与**每类事件订阅者数**；
+**v1 已采用：`ZEventsState GetState()`**（取代原计划的 `int SubscriberCount<T>()`），形状**照对象池的 `ZPoolState` / `ZPoolsState`**：
+
+| 类型 | 成员 | 说明 |
+|---|---|---|
+| `ZEventsState`（`public`） | `int TotalEventTypes` / `int TotalSubscribers` / `List<ZEventState> EventStates` | 一次性快照；属性用 `{ get; private set; }`（与 `ZPoolsState` 一致） |
+| `ZEventState`（`public`） | `Type Type` / `int SubscriberCount` | `Type` 用 `System.Type`（与 `ZPoolState.Type` 一致），**不要用 `string`** |
+
+> ⚠️ 实现要点（照 `ZPoolsState` 的写法）：`TotalSubscribers` 必须在遍历里 **`+=` 累加**（`ZPoolsState` 是 `AllItems += poolState.CountAll;`）。漏掉累加 → 该字段恒为 0，而"按类型的 `SubscriberCount` 却是对的"——这种半个字段是错的，最难被发现。
+
+**延后的部分**（原样保留）：
+
+- 调试模式下记录**最近 N 条事件**（环形缓冲，类型 + 时间 + 订阅者数）；
 - 建议与"对象池监视""资源簿记"合并成一个调试面板（同一批需求、同一套 UI），不要单独造。
-- 实现钩子：`SubscriberCount<T>()` 已提供；事件历史建议用一个可选的 `IEventBusObserver`（默认不注册 = 零成本）。
+- 事件历史建议用一个可选的 `IEventBusObserver`（默认不注册 = 零成本）。
 - **已有一个现成工具**：`R3.Unity` 自带 Editor 窗口 `ObservableTracker`（可列出未释放的 R3 订阅）。排查"桥接订阅泄漏"先用它，不必自研。
 - 排"总线订阅泄漏"（非 R3 侧）才需要自研视图 —— 这也是建议与池/资源监控面板合并的原因。
 
@@ -501,7 +529,7 @@ public static class ZEventBusObservableExtensions
 | 总线级 Scope 容器 / 自动收集凭据 | 见 §2.3 差异 4 |
 | 跨进程 / 网络 / 持久化 | 不在框架范围 |
 | 通道结构升级（链表、无锁高频） | copy-on-write 对"跨模块低频通知"足够；过早优化 |
-| 按收件人分桶的注销索引 | `UnregisterAll` 是低频操作，扫描够用；分桶会引入第二份要同步维护的状态 |
+| 按收件人分桶的注销索引 | `UnsubscribeAll` 是低频操作，扫描够用；分桶会引入第二份要同步维护的状态 |
 | 总线自带重试 / 事务 / 回滚 | 事件是"已发生的事实"，不做补偿 |
 | **CommunityToolkit.Mvvm 式 class 信封**（`MessageBase`/`ValueChangedMessage<T>`） | 与"零分配发布 + `readonly struct` 载荷"冲突；元数据需求由调试视图承担。详见附录 A |
 | **弱引用订阅**（补考据） | 除"掩盖泄漏"外，Unity 下本就不可靠：弱引用跟踪**托管对象**，`Destroy` 后托管包装器常仍存活 → 清理迟到或永不触发。Unity 里管生命周期用 `destroyCancellationToken` 或显式注销 |
@@ -521,14 +549,25 @@ public static class ZEventBusObservableExtensions
 
 | 事项 | 结论 |
 |---|---|
-| 收件人维度 | **采纳（简化形态）**：`Subscribe<T>(object recipient, Action<T>)` + `UnregisterAll(object)`；`recipient` 只作记账，**不改 handler 签名** |
-| 处理器是否回传 recipient（`Action<object,T>`） | **不采纳**：它服务的是"静态 lambda 零闭包"，收益是订阅期一个委托分配，代价是每个调用点都要转型 → 不值（附录 A 第 2 条） |
+| 收件人维度 | **采纳（简化形态）**：`Subscribe<T>(object subscriber, Action<T>)` + `UnsubscribeAll(object)`；`subscriber` 只作记账，**不改 handler 签名** |
+| 处理器是否回传 subscriber（`Action<object,T>`） | **不采纳**：它服务的是"静态 lambda 零闭包"，收益是订阅期一个委托分配，代价是每个调用点都要转型 → 不值（附录 A 第 2 条） |
 | CommunityToolkit.Mvvm 的 class 信封 / 弱引用 / 请求-应答 / MVVM 值变化 / 声明式注册 / 静态单例 | **一律不采纳**（逐条理由见附录 A） |
 | `this` 的自动装配（基类 / 扩展方法 / 反射发现） | **不做**；留"扩展方法 + 空标记接口"作为将来的 10 行可选项（附录 B） |
 | 通道 token | **延后**，等真实需求 |
 | `Unsubscribe<T>(Action<T>)`（按委托取消） | **采纳（选项 A）**：移除**全部**相等项、返回是否有移除、**未命中记 Warning**（把"捕获型 lambda 匹配不上"从静默失效变成当场可诊断）；文档写明它只对方法组 / 静态方法 / 无捕获 lambda 可靠 |
 | 凭据集合类型（`ZSubscriptionBag`） | **不再需要**——收件人路径下注销是一句话，匿名路径自己管 |
 | 主线程判定 | **总线自持线程 ID**；不迁 dispatcher（§4.2） |
+
+**v0.5 新增（使用者拍板）**
+
+| 事项 | 结论 |
+|---|---|
+| 事件的类型约束 | **必须引用类型**（`where T : class`）：原稿"不加约束、载荷优先 `readonly struct`"作废；载荷建议 `sealed` + 只读成员；**struct 事件不支持**；代价是每次发布需一个事件对象（总线自身仍零分配） |
+| 状态查询 | 采纳 **`ZEventsState GetState()`**，照对象池 DTO 风格（`Type` 而非 `string`、`{ get; private set; }`、`TotalSubscribers` 用 `+=` 累加）；弃用 `SubscriberCount<T>()` |
+| 命名统一 | `recipient` → **`subscriber`**；`UnregisterAll` → **`UnsubscribeAll`**（代码与文档统一，消除"一物两名"） |
+| 收件人为 null | `UnsubscribeAll(null)` → **记 Warning 并忽略**（不抛）：既防"误清匿名订阅"，又不给关闭期路径添异常 |
+| `Subscription` 的反向边 | **持有所属通道**（`EventChannel<T>`）；Dispose 只标记，**摘除由通道完成** → 通道必须提供 `Remove(Subscription<T>)`（按身份）重载，否则 `Remove(this)` 会被绑到 `Remove(object)` 而静默失效（§3.2） |
+| `Publish` 无人订阅 | **静默直接返回**（不记任何日志）：没人订阅是最常见情况，不是异常；在那里刷 Warning 会破坏"零分配发布"验收并刷屏 |
 
 ### 13.2 待决策项（需要使用者拍板）
 
@@ -543,7 +582,7 @@ public static class ZEventBusObservableExtensions
 | **D7** | 事件类型两级归属规则（§8） | 采纳 | 决定 `ZResourceLoaded` 这类事件放 Core 还是模块程序集 |
 | **D8** | 调试视图（§10）何时做 | 与池/资源监控面板合并，**不做单独的** | 避免三套调试 UI |
 | **D9** | 是否给 `Zipper.Core.asmdef` 打开 `overrideReferences`，把"Core 不引 R3 / VContainer / Addressables"从纪律变成**编译期强制** | 建议做（一次 asmdef 配置 + 重新导入） | §1.2：core DLL 目前被自动引用，Core 里误写 `R3.*` 也能编过；打开后需确认 UniTask 等 UPM asmdef 引用不受影响 |
-| **D10** | 是否加**调试期**检查：`recipient` 为**值类型**时拒绝或记 Warning | 建议加（仅编辑器/调试期，成本一次 `IsValueType` 判断） | 值类型会被装箱 → 注册与 `UnregisterAll` 各装箱一次 → 永远匹配不上（静默泄漏）；§2.2 已写死"禁止值类型 recipient"，这条是把它变成当场可见 |
+| **D10** | 是否加**调试期**检查：`subscriber` 为**值类型**时拒绝或记 Warning | 建议加（仅编辑器/调试期，成本一次 `IsValueType` 判断） | 值类型会被装箱 → 注册与 `UnsubscribeAll` 各装箱一次 → 永远匹配不上（静默泄漏）；§2.2 已写死"禁止值类型 subscriber"，这条是把它变成当场可见 |
 | **D11** | `Subscribe` 是否加 `CancellationToken` 重载（配 `destroyCancellationToken` 实现"销毁即自动注销"） | **暂不做**，留口 | 若做：给线程模型加一个"回调可能在非主线程触发"的例外入口，且每次订阅多一个 `CancellationTokenRegistration`（订阅期分配，发布期无影响） |
 | **D12** | 是否将来给 `Subscribe` 加"扩展方法 + 空标记接口"的糖（`Subscribe(_bus, OnX)`，receiver 隐式） | **暂不做**；若实测嫌烦再补 | 10 行、不动契约；会引入一个空接口 `IZEventRecipient` |
 | **D13** | 主线程设施中立化（`ZMainThreadDispatcher` 迁 `Zipper.Core.Threading` + 降 `internal` + 组装层持有） | **独立重构项**，等做排队式跨线程发布时一起 | 顺带解掉"该类型本应为 internal"和"`IsMainThread` 语义是创建线程"两个问题 |
@@ -554,6 +593,8 @@ public static class ZEventBusObservableExtensions
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.5.1 | 2026-09-13 | **修复文档自身的两处错误 + 一次审查跟进**：① **更正 v0.5 的 `Array.Resize` 说法**——`Array.Resize` 本质就是"新数组 + 复制 + 替换字段"，语义上就是 copy-on-write，我 v0.5 写成"原地改写、要避免"是错的；真正要守的只有"不要在正在遍历的数组上原地改元素"。② **更正 `Subscribe` 的 null 校验**：v0.5 写"公开的两参重载 subscriber 为 null → 抛"与实现/设计都冲突——`subscriber = null` 就是**匿名订阅**（单参重载正是这么调的），合法；需要守卫的只有 `UnsubscribeAll(null)`。同时补"`action == null` 必须早失败"的理由（否则 null handler 进通道，发布时每条都记 Error）与非主线程 `Subscribe` **必须返回共享空凭据而非 null**（返回 null 会让调用方 Dispose 时 NRE）。③ 新增约定：**`EventChannel<T>.Remove(...)` 要返回"移除了几个"**，否则上层 `Unsubscribe` 只能无条件 `return true` → 未命中却**谎报成功**（§9 第 26 条据此改写）。④ 术语扫尾：§3.3/§4.2/§5/§9/§12/§13.1 里残留的 `UnregisterAll`→`UnsubscribeAll`、`recipient`/`Recipient`→`subscriber`/`Subscriber` 全部统一（变更记录与附录 A 中的历史/第三方 API 名称保留原样） |
+| v0.5 | 2026-09-13 | **契约对齐已实现形态 + 三项使用者决策**：① **`where T : class` 定案**——事件必须是引用类型，原 §2.2"不加约束、载荷优先 `readonly struct`"**作废**，并写明代价（每次发布需一个事件对象；总线自身仍零分配）与"struct 事件不支持"；② **状态查询改为 `ZEventsState GetState()`**（照对象池 `ZPoolState/ZPoolsState` 的 DTO 形状：`Type` 而非 `string`、`{ get; private set; }`、`TotalSubscribers` 必须 `+=` 累加），弃用 `SubscriberCount<T>()`；③ **命名统一**：`recipient` → `subscriber`、`UnregisterAll` → `UnsubscribeAll`（消除一物两名）；④ 收件人为 null 改为"**记 Warning 并忽略**"（不抛），既防误清匿名订阅又不给关闭期添异常；⑤ §3.2 补"**反向边指向通道、摘除由通道负责**"，并显式警告"若通道只有 `Remove(object)`，`_channel.Remove(this)` 会静默匹配不上"；⑥ §2.1 伪代码补 `Publish` 无通道时**不记日志**（无人订阅不是异常，刷 Warning 会破坏零分配验收）与主线程/关闭期/异常隔离的落点。修订原因：代码审查（两轴）发现实现与 v0.4 有契约级偏离，逐条裁决后以本版为准 |
 | v0.4 | 2026-09-13 | **采纳"按委托取消"`bool Unsubscribe<T>(Action<T>)`（选项 A，加进 `IZEventBus` 契约）**：移除**全部**相等项、返回是否有移除、**未命中记 Warning**（把"捕获型 lambda 匹配不上"从静默失效变成当场可诊断）；文档写明其可靠前提是"同一个委托实例"（方法组/静态/无捕获 lambda 天然满足，两处重写的捕获型 lambda 不可靠），并跟 `UnregisterAll`/凭据做"三种取消方式"对照表。**修正 v0.3 的两处错误**：§2.2 原写"`recipient` 必须与 `handler.Target` 引用相同"是过严且会造成误报——收件人只是记账键，改为"非 null 引用类型 + 生命周期归属语义 + **禁止值类型**（装箱导致 `UnregisterAll` 永远匹配不上）"；D10 的检查项相应由"Target 一致性"改为"值类型 recipient"。§3.2/§4.2/§5.1/§9/§12/§13.1 同步：新增 `Unsubscribe` 的机制与线程约束、补"单个取消"示例、验收增至 27 条、新增"语言层面做不到"的不做项 |
 | v0.3 | 2026-09-13 | **采纳"收件人维度"（简化形态）**：契约新增 `Subscribe<T>(object recipient, Action<T>)` 与 `UnregisterAll(object)`（`recipient` 只作记账、**不回传进 handler 签名**、`null` 不受理、引用相等比较）；§3.2 `Subscription` 增 `Recipient` 字段与扫描式注销；§3.3 补"回调内 `UnregisterAll`"语义；§5 重写为"两条路径 + 三类对象"的注销清单与纪律（服务靠 `Dispose`、场景对象靠 `OnDestroy`、临时走凭据），§5.2 泄漏场景更新；§4.2 明确"**总线自持线程 ID、不复用日志 dispatcher**"（三条具体耦合理由）并把"主线程设施中立化"记为独立重构项（附两条日志模块备查发现）；§9 增 6 条验收；§12 增 9 条"明确不做"（含 Unity 语境下弱引用不可靠的考据）；§13 拆为"已定 / 待决"，D4 消解、新增 D10–D13；**§4.2 补"跨线程发布三条路"对照表并定案 v1 取"调用方自己 `SwitchToMainThread`"（不排队、不 marshal、不复用日志 dispatcher）**；**新增附录 A**（与 CommunityToolkit.Mvvm messenger 的逐条对照取舍）与**附录 B**（为什么不做 `this` 自动装配）|
 | v0.2 | 2026-09-13 | **更正 §1.2 的 R3 环境结论（事实性修订）**：v0.1 称"只装了 core、缺 `R3.Unity`"是**错误**的——当时只核对了 NuGet 的 core DLL（`Assets/Packages/R3.1.3.1`），漏看了 UPM 包。实际 `Packages/manifest.json` 里 `com.cysharp.r3` 已指向 `https://github.com/Cysharp/R3.git?path=src/R3.Unity/Assets/R3.Unity`，包在 `Library/PackageCache/com.cysharp.r3@fdfb36e3d5`，版本 1.3.1 与 core 一致。§1.2 重写为"两步安装均已完成"并列出 Unity 集成提供的全部能力（`UnityProviderInitializer` 自动初始化、PlayerLoop Time/Frame Provider、`AddTo(this)`、`UnityEvent.AsObservable`、Trigger 族、Editor 的 `ObservableTracker`）；§7.3 由"缺什么"改为"可用能力"表；D1 关闭；P2/P3 相应调整。新增 D9 与 §1.2 的边界说明：core DLL 因 asmdef 未开 `overrideReferences` 而被自动引用，**"Core 不引 R3"目前仅靠纪律**，可用 `overrideReferences` 交给编译器强制 |
