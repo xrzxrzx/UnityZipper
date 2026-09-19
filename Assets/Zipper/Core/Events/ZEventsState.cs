@@ -1,12 +1,28 @@
+using System;
+using System.Collections.Generic;
+using Zipper.Core.Events.EventChannel;
+
 namespace Zipper.Core.Events
 {
     public class ZEventsState
     {
         public int TotalEventTypes { get; }
         public int TotalSubscribers { get; }
-        public ZEventsState(int totalEventTypes, int totalSubscribers)
+        public List<ZEventState> EventStates { get; }
+
+        internal ZEventsState(Dictionary<Type, EventChannelBase> eventChannels)
         {
-            TotalEventTypes = totalEventTypes;
+            EventStates = new List<ZEventState>();
+
+            TotalEventTypes = eventChannels.Count;
+            int totalSubscribers = 0;
+
+            foreach (var channelKeyValue in eventChannels)
+            {
+                EventStates.Add(new ZEventState(channelKeyValue.Key, channelKeyValue.Value.TotalSubscribers));
+                totalSubscribers += channelKeyValue.Value.TotalSubscribers;
+            }
+
             TotalSubscribers = totalSubscribers;
         }
     }
