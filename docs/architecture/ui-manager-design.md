@@ -1,6 +1,6 @@
 # Zipper UI 管理器设计（Zipper.UI — uGUI + MVVM）
 
-> 状态：**v0.2 草稿，待审阅**（D1–D7 已按使用者拍板落定，见 §13）
+> 状态：**v0.3 草稿，待审阅**（D1–D7 已定；**新增 D8 = UI 音效依赖方向待定**，见 §13.2）
 > 定位：UI 管理器 MVP 的**契约、机制与边界**——面板栈与生命周期、View 池化与解绑/重绑协议、最小 MVVM 绑定层、加载与装配。**只给设计思路与思路级伪代码，不含实现代码**。
 > 实施归属：AI 只负责架构设计与思路级伪代码；**代码实现由使用者完成**（`docs/standards/agent-role.md`）。
 > 关联：`docs/planning/technical-roadmap.md` §5.3（UI 技术路线）/§5.5（组装层）/§5.4.1（对象池）/§4.2（依赖链）、`docs/architecture/pool-manager-design.md`、`docs/architecture/resource-manager-design.md`、`docs/architecture/event-bus-design.md`、`docs/architecture/bootstrap-design.md`、`docs/standards/naming-convention.md`
@@ -304,7 +304,39 @@ PublishAsync 前的注册（组装层或 UI Bootstrap）：
 | 池 | View 复用只经 `IZObjectPoolManager`；**使用方不自己调池**（框架代管，避免破坏 §4.2 的生命周期映射） |
 | 总线 | 只做跨模块低频通知；UI **不把面板状态发到总线**（状态归 VM） |
 | 日志 | 构造注入 `IZLogger`；打开失败/加载失败/绑定异常记 Error |
-| 组装层 | 只做：注册 `IZPanelManager` + 调 `panelRegistry.Register<...>()` + 提供场景里的 `ZPanelRoot`（层级父节点） |
+| **音频** | **UI 音效**（点击/悬停/返回/面板开关）：经注入的抽象接口播放，**默认不建立 UI→Audio 横向依赖**；音频侧保证"失败不抛 + 不产生需 UI 管理的凭据"。详见 **§8.1** 与 `docs/architecture/audio-manager-design.md` §9 |
+| 组装层 | 只做：注册 `IZPanelManager` + 调 `panelRegistry.Register<...>()` + 提供场景里的 `ZPanelRoot`（层级父节点）+（若选方案②）把音频模块适配成 `IZUISfx` |
+
+### 8.1 与音频的对接（UI 音效）
+
+**UI 需要什么**：点击/悬停/返回音、面板开关音、**UI 音量独立可调**、**点了就响**（不能等加载）、"少一个音效不能让点击崩"。
+
+**音频侧提供的能力**（详见 `audio-manager-design.md` §9.1）：`PlaySfx(address)`（2D、fire-and-forget、播完自动归还）/ `PreloadAsync(address)` 预热 / `ZAudioBus.Ui` 独立音量 / `PlaySfxAsync(...)` 返回句柄（"切面板时淡出上一个音效"才需要）。
+
+**两条必须由音频侧保证**（UI 依赖它们）：
+1. **`Play` 不抛**：地址无效/加载失败 → 记 Error 后静默返回（UI 点击不因缺音效而崩）；
+2. **不产生 UI 需要管理的凭据**：便捷入口内部拿句柄、播完自动归还。
+
+**依赖方向（新增待决 D8，见 §13.2）**：
+
+| 方案 | 做法 | 取舍 |
+|---|---|---|
+| ① UI → Audio 直接依赖 | `Zipper.UI` 引 `Zipper.Audio`，注入 `IZAudioManager` | 最直白；但**横向依赖** + UI 失去"可裁剪"（roadmap §4.2 依赖链要改成 `… → Audio → UI`） |
+| **② UI 定义 `IZUISfx` 抽象 + 组装层注入适配**（**推荐**） | `Zipper.UI` 内部只定义 `IZUISfx { void Play(string address); void Preload(string address); }` + 一个空实现；组装层（同时可见 UI 与 Audio）写约 10 行适配 | 零横向依赖、UI 可独立裁剪、可单测（塞假实现）；符合 roadmap §4.1 原则 1/4（依赖单向 + 依赖倒置） |
+| ③ 走事件总线 | UI `Publish<ZUISfxRequested>(...)`，音频模块订阅 | ❌ 与 `event-bus-design` §2.1 纪律冲突——"请播放音效"是**请求**不是**事实**，该用接口方法；且事件类型放哪都会让一方欠另一方依赖 |
+
+**UI 侧的使用形态（两种方案都一样）**：
+
+```
+// View 的 OnBind 阶段
+_sfx.Play(UISfx.Click);        // 地址常量归使用工程（框架不内置业务清单）
+_sfx.Play(UISfx.PanelOpen);
+
+// 面板首次打开时预热，避免第一声延迟（"点了就响"的关键）
+_sfx.Preload(UISfx.Click);
+```
+
+> 纪律：**点击路径上不同步等待加载**（`Play` 只用已缓存的 clip，未预热过则交给音频模块的缓存策略）；UI 不碰 `AudioSource`、不碰 Mixer 组、不碰音量换算（线性 ↔ dB 由音频模块内部处理）。
 
 ---
 
@@ -389,6 +421,12 @@ Assets/Zipper/UI/
 | C1 | 附录 A 里 Unity 官方 MVVM（App UI）的判据 | 结论（不引入）**不依赖**该项（理由 ② 独立成立）；但"App UI 的绑定层是否只服务 UI Toolkit"这条待使用者一手确认后定稿 |
 | C2 | `ZPanelOpenOptions` 的字段集合 | v1 先按 §4.1 列的四项（层级 / 遮罩行为 / `SingleInstance` / 缓存与 VM 生命周期），实现时若有增补再回写 |
 
+### 13.2 新增待决（来自音频接洽，2026-09-13）
+
+| # | 决策 | 我的建议 | 影响 |
+|---|---|---|---|
+| **D8** | **UI 音效的依赖方向**（§8.1 三方案） | **方案 ②：UI 定义 `IZUISfx` 抽象 + 组装层注入适配** | 决定 `roadmap §4.2` 依赖链是否要改成 `Core → {Pool,Resources} → Audio → UI`；决定 UI 模块是否保持"可裁剪" |
+
 ---
 
 ## 附录 A：绑定层"最小自研 vs 引入社区 MVVM"
@@ -418,5 +456,6 @@ Assets/Zipper/UI/
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| v0.3 | 2026-09-13 | **补「与音频的对接（UI 音效）」**（使用者提出"UI 管理器要绑定 UI 音效"）：新增 **§8.1**（UI 需要什么 / 音频侧提供什么 / **两条必须保证：`Play` 不抛 + 不产生需 UI 管理的凭据** / 依赖方向三方案对照 / UI 侧使用形态 + "点击路径不同步等加载"纪律）；§8 边界表补"音频"行；新增 **D8**（UI 音效依赖方向；推荐方案 ②：UI 定义 `IZUISfx` + 组装层适配）；配套产出 `docs/architecture/audio-manager-design.md` v0.1（使用者决定音频先行） |
 | v0.2 | 2026-09-13 | **D1–D7 由使用者拍板落定**（§13 由"待决策项"改为"已定决策"）：D1 **最小自研**绑定层；D2 **复用** `IZObjectPoolManager`+`ZObjectPool<T>`；D3 **独立** `Zipper.UI` asmdef；D4 VM **默认 Transient + 面板关闭时由管理器 Dispose**（常驻面板显式声明）；D5 返回键由**输入层**调用、框架不吞；D6 测试落**现有 `Zipper.Tests`**；D7 注册表**归 UI 模块**。同步 §5.2/§9/§11 里指向 D 项的表述；新增 §13.1「仍待确认」（App UI 判据、`ZPanelOpenOptions` 字段集合） |
 | v0.1 | 2026-09-13 | 初稿（S1 经使用者批准，方案 A）：目标与范围、前置事实（既有契约 / R3 能力 / VContainer Transient 不跟踪的源码事实）、分层与职责、面板栈与生命周期状态机与钩子顺序表、异步取消与失败语义、**View 池化与解绑/重绑协议**、最小 MVVM 绑定层（含绑定模板与 VM 可测性纪律）、加载与装配（显式注册表、**UI 管理器充当母本托管的上层组合器**）、VM 所有权规则、与总线/资源/池/日志的边界、目录与程序集、分阶段实施、10 条验收、明确不做 9 项、待决 D1–D7、附录 A（最小自研 vs 社区 MVVM）、附录 B（`AddTo(this)` 的池化陷阱） |
