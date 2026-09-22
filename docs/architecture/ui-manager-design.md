@@ -425,7 +425,7 @@ Assets/Zipper/UI/
 
 | # | 决策 | 我的建议 | 影响 |
 |---|---|---|---|
-| **D8** | **UI 音效的依赖方向**（§8.1 三方案） | **方案 ②：UI 定义 `IZUISfx` 抽象 + 组装层注入适配** | 决定 `roadmap §4.2` 依赖链是否要改成 `Core → {Pool,Resources} → Audio → UI`；决定 UI 模块是否保持"可裁剪" |
+| **D8** | **UI 音效的依赖方向**（§8.1 三方案；`audio-manager-design.md` §9.2 是**同一个决策**，编号统一用 D8） | **方案 ②：UI 定义 `IZUISfx` 抽象 + 组装层注入适配** | 决定 `roadmap §4.2` 依赖链是否要改成 `Core → {Pool,Resources} → Audio → UI`；决定 UI 模块是否保持"可裁剪" |
 
 ---
 
