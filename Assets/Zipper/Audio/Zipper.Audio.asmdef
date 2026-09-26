@@ -1,0 +1,20 @@
+{
+    "name": "Zipper.Audio",
+    "rootNamespace": "",
+    "references": [
+        "GUID:cafbd9f0b3270204694d2a068860c2a2",
+        "GUID:d82f8c7a63a99364b80e1e09e0fc95a6",
+        "GUID:4986aac94aa1c7d4c9cb3a94324e2456",
+        "GUID:f51ebe6a0ceec4240a699833d6309b23",
+        "GUID:b0214a6008ed146ff8f122a6a9c2f6cc"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

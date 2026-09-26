@@ -22,6 +22,7 @@ namespace Zipper.DI
             await RunPhaseAsync(ZBootPhase.Events, cancellation);
             await RunPhaseAsync(ZBootPhase.Resources, cancellation);
             await RunPhaseAsync(ZBootPhase.Pools, cancellation);
+            await RunPhaseAsync(ZBootPhase.Audio, cancellation);
             await RunPhaseAsync(ZBootPhase.UI, cancellation);
         }
 

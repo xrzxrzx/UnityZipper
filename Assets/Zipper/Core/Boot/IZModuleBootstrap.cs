@@ -9,6 +9,7 @@ namespace Zipper.Core.Boot
         Events,
         Resources,
         Pools,
+        Audio,
         UI,
     }
 
