@@ -73,6 +73,9 @@ namespace Zipper.Pool
             var tItem = item as T;
             if (tItem == null)
             {
+                if (item is UnityEngine.Object unityObject && unityObject == null)
+                    return;
+
                 _logger.Error($"对象池：归还对象类型不匹配，期望 {typeof(T).Name}", new InvalidCastException($"对象池：归还对象类型不匹配，期望 {typeof(T).Name}"));
                 return;
             }
@@ -84,14 +87,15 @@ namespace Zipper.Pool
 
             if (!allItems.Contains(tItem))
             {
-                _logger.Error($"对象池：对象 {tItem.name} 不属于当前对象池", new InvalidOperationException($"对象池：对象 {tItem.name} 不属于当前对象池"));
+                string name = tItem != null ? tItem.name : "<已销毁>";
+                _logger.Error($"对象池：对象 {name} 不属于当前对象池", new InvalidOperationException($"对象池：对象 {name} 不属于当前对象池"));
                 return;
             }
 
             tItem.OnReturn();
             _onReturn?.Invoke(tItem);
 
-            // 如果对象正在等待清理，则直接清理
+            //如果对象正在等待清理，则直接清理
             if (clearPendingItems.Remove(tItem))
             {
                 ClearItem(tItem);
@@ -196,11 +200,16 @@ namespace Zipper.Pool
 
         private void ClearItem(T item)
         {
-            item.OnClear();
-            _onClear?.Invoke(item);
+            if (item != null)
+            {
+                item.OnClear();
+                _onClear?.Invoke(item);
+            }
 
             allItems.Remove(item);
-            UnityEngine.Object.Destroy(item.gameObject);
+
+            if (item != null)
+                UnityEngine.Object.Destroy(item.gameObject);
 
             totalCount--;
         }
