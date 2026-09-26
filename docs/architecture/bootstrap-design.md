@@ -1,10 +1,10 @@
 # Zipper 启动与装配设计（Bootstrap）
 
-> 状态：**v1.0 草稿，待审阅**
+> 状态：**v1.1（2026-09-26 同步实现：`ZBootPhase` 落为六档并新增 `Audio` 阶段）**
 > 定位：框架的**启动 / 装配机制**设计——模块如何被初始化、顺序如何保证、Bootstrap 代码放哪、`CancellationToken` 从哪来。**只给设计思路与接口形态，不含实现代码**。
 > **实施归属**：AI 只负责架构设计与思路级伪代码；**代码实现由使用者完成**（`docs/standards/agent-role.md`）。
-> 关联：`docs/architecture/logging-design.md`（日志模块作为第一个 Bootstrap 使用者）、`docs/architecture/pool-manager-design.md`、`docs/planning/technical-roadmap.md` §5.5（组装层）
-> 变更记录：v1.0 初稿（从 `logging-design.md` §5 迁出并扩展为通用机制）。
+> 关联：`docs/architecture/logging-design.md`（日志模块作为第一个 Bootstrap 使用者）、`docs/architecture/pool-manager-design.md`、`docs/architecture/audio-manager-design.md`、`docs/planning/technical-roadmap.md` §5.5（组装层）
+> 变更记录：**v1.1 同步实现**（`ZBootPhase` 落为六档、新增 `Audio` 阶段、编排顺序以 `ZBootstrapper.StartAsync` 为准、Bootstrap 类名对齐实现）；v1.0 初稿（从 `logging-design.md` §5 迁出并扩展为通用机制）。
 
 ---
 
@@ -22,7 +22,7 @@
 
 ### 1.1 要解决的问题
 
-1. 各模块（日志 / 事件总线 / 资源 / 池 / 将来 UI、音频）**如何被初始化**
+1. 各模块（日志 / 事件总线 / 资源 / 池 / 音频 / 将来 UI）**如何被初始化**
 2. **初始化顺序**如何保证（例如：日志必须先于资源——资源初始化要打日志）
 3. Bootstrap 代码**放哪**（不破坏程序集封装）
 4. `CancellationToken` **从哪来**、什么时候才需要自己造
@@ -39,11 +39,12 @@
 
 ```
 Zipper.DI（组装层）
- └─ ZipperBootstrapper               ← 总 Bootstrap：只做"按阶段编排"
-      ├─ ZLoggerBootstrap   Phase=Logging     （日志最先）
-      ├─ ZEventBusBootstrap Phase=Events
-      ├─ ZResourceBootstrap Phase=Resources
-      └─ ZObjectPoolBootstrap Phase=Pools
+ └─ ZBootstrapper                    ← 总 Bootstrap：只做"按阶段编排"
+      ├─ ZLoggerBootstrapper     Phase=Logging     （日志最先）
+      ├─ ZResourcesBootstrapper  Phase=Resources
+      └─ ZAudioBootstrapper      Phase=Audio       （建 [Zipper] AudioRoot / 原型母本 / 池 + 加载 AudioMixer）
+
+    （Events / Pools 阶段暂无 Bootstrap 实现：事件总线与池管理器无需异步初始化，构造即就绪）
 ```
 
 | 收益 | 说明 |
@@ -60,7 +61,7 @@ Zipper.DI（组装层）
 ```
 public enum ZBootPhase          // 启动阶段（语义化，替代"魔法数字 Order"）
 {
-    Logging = 0, Events = 100, Resources = 200, Pools = 300, UI = 400,
+    Logging, Events, Resources, Pools, Audio, UI,
 }
 
 public interface IZModuleBootstrap
@@ -69,6 +70,9 @@ public interface IZModuleBootstrap
     UniTask InitializeAsync(CancellationToken ct);          // 统一异步（资源加载天然异步）
 }
 ```
+
+- **执行顺序的唯一真源是 §4 的编排**（`ZBootstrapper.StartAsync` 里逐行写死）；枚举顺序目前与之一致（`Audio` 在 `UI` 之前），但**不要依赖枚举顺序**——新增阶段时以编排为准，枚举只作标识
+- 枚举**不带显式数值**（实现即如此）：阶段之间没有"数值间隔"语义，只有先后
 
 - **契约放 `Zipper.Core`**（如 `Core/Boot/`）：底层契约层（Core 仅依赖 Unity + UniTask），所有模块都能实现，不反向依赖组装层
 - 统一 `UniTask` + `CancellationToken`（roadmap：对外异步一律 UniTask）
@@ -93,6 +97,8 @@ public class ZipperBootstrapper : IAsyncStartable          // 由 VContainer 启
         await RunPhase(ZBootPhase.Events,    ct);
         await RunPhase(ZBootPhase.Resources, ct);
         await RunPhase(ZBootPhase.Pools,     ct);
+        await RunPhase(ZBootPhase.Audio,     ct);   // 音频：建根对象/原型/池 + 加载 AudioMixer（在 Resources 之后 → Addressables 已就绪）
+        await RunPhase(ZBootPhase.UI,        ct);
     }
 
     async UniTask RunPhase(ZBootPhase phase, CancellationToken ct)
@@ -211,7 +217,8 @@ builder.RegisterEntryPoint<ZipperBootstrapper>(Lifetime.Singleton);
 | **Events (100)** | 事件总线 | 若需要：装配总线实例 / 清理策略 | 日志（可选，用于告警） |
 | **Resources (200)** | 资源管理器 | 初始化 Addressables（加载 catalog）；可选预下载 / 预热 | 日志 |
 | **Pools (300)** | 对象池管理器 | 若需要：预热常用池；建立池与母本的登记 | 日志、资源（母本来源） |
-| **UI (400)** | UI 管理器（将来） | 建 UI 根节点 / 层级、加载常驻面板 | 日志、资源、池、事件总线 |
+| **Audio** | 音频管理器 | 建 `[Zipper] AudioRoot` + 运行时原型母本 → `CreatePool<PooledAudioSource>`；把 root 交给音频管理器（BGM 双源挂其下）；加载 `AudioMixer`（**失败降级、不阻断引导**） | 日志、资源（Mixer）、池 |
+| **UI** | UI 管理器（将来） | 建 UI 根节点 / 层级、加载常驻面板 | 日志、资源、池、事件总线、**音频（UI 音效）** |
 
 > 顺序的"必要性"都来自**跨阶段依赖**：后一阶段的模块会用到前一阶段的服务（最典型：所有模块都要打日志 → 日志必须最先）。
 
@@ -235,7 +242,7 @@ builder.RegisterEntryPoint<ZipperBootstrapper>(Lifetime.Singleton);
 
 | 项 | 内容 | 建议 |
 |---|---|---|
-| `ZBootPhase` 取值粒度 | 是否需要更细阶段（如 `ResourcesPreload`） | 先按 §3 五档，出现真实需求再加 |
+| `ZBootPhase` 取值粒度 | 是否需要更细阶段（如 `ResourcesPreload`） | 现为 §3 **六档**（`Logging/Events/Resources/Pools/Audio/UI`），出现真实需求再加 |
 | 同阶段内排序 | 是否强制按类型名稳定排序 | 不强制；优先消除同阶段依赖 |
 | 惰性初始化 | 是否改走"注入即就绪"（§9） | v1 不做 |
 | 总 Bootstrap 与场景切换 | 多场景是否需要二次初始化 / 子 Scope | 延后（单场景 Demo 不需要） |
@@ -247,6 +254,7 @@ builder.RegisterEntryPoint<ZipperBootstrapper>(Lifetime.Singleton);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| **v1.1** | 2026-09-26 | **同步实现（音频阶段落地）**：§3 `ZBootPhase` 落为六档 `Logging/Events/Resources/Pools/Audio/UI`（去掉显式数值，写明"编排才是执行顺序的唯一真源"）；§4 编排补 `Audio`、`UI` 两次 `RunPhase`；§1.1/§2 的 Bootstrap 清单对齐实现类名（`ZLoggerBootstrapper` / `ZResourcesBootstrapper` / `ZAudioBootstrapper`），并注明 Events/Pools 阶段暂无实现；§10 阶段清单新增 **Audio** 行（建根对象/原型/池 + 加载 Mixer，失败降级），UI 行补音频依赖；§12 待决项"五档"改"六档"。依据：音频模块实现落地（commit `c0dd834`） |
 | v1.0.1 | 2026-09-12 | 措辞同步：Core 依赖边界更正为"**仅依赖 Unity + UniTask**"（契约的 `UniTask` 返回类型所致），详见 `core-design.md` v0.9.3 / `roadmap` v0.10 |
 | v1.0 | 2026-09-10 | 初稿：从 `logging-design.md` §5 迁出并扩展为通用机制——分层理由、`IZModuleBootstrap`/`ZBootPhase` 契约、总 Bootstrap 显式阶段编排（含四方案对照与"不用 R3"边界）、位置约定（注册 vs 初始化、现状改动点）、容器注册、`CancellationToken` 用法、失败策略、惰性初始化备选、各模块启动清单、验收与待决项 |
 

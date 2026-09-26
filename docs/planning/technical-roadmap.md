@@ -3,7 +3,7 @@
 > 状态：**v0.11 草稿，待审批**
 > 定位：本文件是框架开发的总体技术路线，回答「做什么、怎么做、按什么顺序做」；**不含代码实现**。
 > 依据：协调者规范（先文档、后编码；无批准、不实施）；`docs/standards/agent-role.md`（AI 只做设计，代码由使用者实现）。
-> 变更记录：v0.2 融入调研结论；v0.3 定为 **.unitypackage 右键导出、拆箱即用**（放弃 UPM 包形态）；**v0.4（2026-09-06）** 同步近期现实与决策——现状盘点更新、资源管理器键体系改为 address/label、Core 定为"零框架依赖"例外、新增事件总线决策、新增 Core 基础设施一节、里程碑状态刷新；**v0.5** 事件总线改**双实现**（自研 + R3 封装，R3 只负责 UI 通知）；**v0.6** 事件总线命名统一框架约定（`IZEventBus` / `ZEventBus` / `ZR3EventBus`，见命名规范）；**v0.7（2026-09-06）** 事件总线由双实现**收敛为单实现 + R3 桥**（删除 `ZR3EventBus`，R3 只做响应式流与订阅侧操作符加工）；**分发相关（UPM 依赖与"随包自包含"的冲突）按使用者决定暂缓，待其另行决策**；**v0.11（2026-09-13）状态刷新**：M1 地基完成（日志/事件总线实现并自测通过）、M2 UI 改为"设计就绪，待实现"（`ui-manager-design.md` v0.2）、文档清单与版本号同步。
+> 变更记录：v0.2 融入调研结论；v0.3 定为 **.unitypackage 右键导出、拆箱即用**（放弃 UPM 包形态）；**v0.4（2026-09-06）** 同步近期现实与决策——现状盘点更新、资源管理器键体系改为 address/label、Core 定为"零框架依赖"例外、新增事件总线决策、新增 Core 基础设施一节、里程碑状态刷新；**v0.5** 事件总线改**双实现**（自研 + R3 封装，R3 只负责 UI 通知）；**v0.6** 事件总线命名统一框架约定（`IZEventBus` / `ZEventBus` / `ZR3EventBus`，见命名规范）；**v0.7（2026-09-06）** 事件总线由双实现**收敛为单实现 + R3 桥**（删除 `ZR3EventBus`，R3 只做响应式流与订阅侧操作符加工）；**分发相关（UPM 依赖与"随包自包含"的冲突）按使用者决定暂缓，待其另行决策**；**v0.11（2026-09-13）状态刷新**：M1 地基完成（日志/事件总线实现并自测通过）、M2 UI 改为"设计就绪，待实现"（`ui-manager-design.md` v0.2）、文档清单与版本号同步；**v0.13（2026-09-26）** 音频模块实现落地——M2 改为"实现完成，待手工验收"、`audio-manager-design.md` → v0.2、**`ZBootPhase` 新增 `Audio` 阶段**（`bootstrap-design.md` v1.1）。
 
 ---
 
@@ -118,7 +118,7 @@ Assets/Zipper/
 - 验收标准：播放/停止/淡入淡出正确性、AudioSource 池复用无泄漏、音量持久化生效。
 - **UI 音效对接（新增，与 §5.3 呼应）**：音频侧为 UI 提供 `PlaySfx(address)`（2D、fire-and-forget、播完自动归还）、`PreloadAsync` 预热、`ZAudioBus.Ui` 独立音量，并保证"**失败不抛**"与"不产生需 UI 管理的凭据"；UI 侧的依赖方向待定（`ui-manager-design.md` D8，三方案见其 §8.1）。
 - **关键实现约束（写进设计稿）**：`ZObjectPool<T>` 要求 `T : Component, IZObjectPoolItem`，而 `AudioSource` **无法实现接口** → 用包装组件 `PooledAudioSource` 池化；原型母本在代码里创建（`new GameObject` + inactive + `DontDestroyOnLoad`），**音频模块不依赖任何预制体资源**；销毁顺序 = **先清池 → 再销毁原型**。
-- 设计稿：`docs/architecture/audio-manager-design.md`（v0.1）
+- 设计稿：`docs/architecture/audio-manager-design.md`（v0.2）
 
 ### 5.3 UI 管理器（Zipper.UI）— 重点模块，uGUI + MVVM
 
@@ -199,7 +199,7 @@ Assets/Zipper/
 |---|---|---|---|
 | M0 工程治理 | 2026-09 上旬 | git/仓库、docs 体系、目录重组与 asmdef、Addressables 引入 | **基本完成**（AGENTS.d、C# 规范待补） |
 | M1 地基 | 2026-09~10 | Core 基础设施（日志/事件总线）、普通对象池完善、资源管理器实现 | **✅ 完成（2026-09-13）**：日志与事件总线**实现并自测通过**（19/19 + 8/8）、池 v1 定稿、资源管理器实现；**仅剩测试用例待补** |
-| M2 音频管理器（**顺序提前**） | 2026-09 下~10 | 音频管理器（三类播放 + AudioSource 池化 + 音量分组与持久化 + BGM 独占） | **设计就绪，待实现**：`docs/architecture/audio-manager-design.md`（v0.1；含 D1–D4 与 C1–C3 待定）。**提前依据：UI 管理器要绑定 UI 音效，故音频先行**（见 §5.2/§5.3 与 `ui-manager-design.md` §8.1） |
+| M2 音频管理器（**顺序提前**） | 2026-09 下~10 | 音频管理器（三类播放 + AudioSource 池化 + 音量分组与持久化 + BGM 独占） | **✅ 实现完成（2026-09-26），待 Unity 手工试听逐条验收**：`docs/architecture/audio-manager-design.md`（v0.2；D2/D3/D4、C1/C2 已定案）。实现落地 commit `c0dd834`（`Assets/Zipper/Audio/` 全部 + `ZBootPhase.Audio` + DI 注册），**编译 0 error / 0 warning**。**遗留**：音效淡出（§13-6）、`Zipper.Tests` 加 `Zipper.Audio` 引用与纯逻辑用例、Mixer 加载失败的降级 try/catch。**提前依据：UI 管理器要绑定 UI 音效，故音频先行**（见 §5.2/§5.3 与 `ui-manager-design.md` §8.1） |
 | M3 UI 核心（**顺延**） | 2026-10~11 | UI 管理器 MVP（面板栈 + MVVM 绑定 + View 池化 + **UI 音效对接**） | **设计就绪，待实现**：`docs/architecture/ui-manager-design.md`（v0.3；D1–D7 已定、D8 待定）；原"R3 待引入"的阻塞**已解除**（R3 core + `R3.Unity` 均 1.3.1） |
 | M4 ECS 池 | 2027-01~02 | DOTS 引入；ECS 对象池 + 性能验证 | 未开始 |
 | M5 毕设收尾 | 2027-03 | **三模块整合 + Samples**；演示工程集成；文档/架构图；答辩材料 | 未开始 |
@@ -223,16 +223,17 @@ Assets/Zipper/
 ## 附录
 
 - 调研报告：`docs/research/unity-framework-tech-facts.md`（其中的 UPM 包形态方案**已被 v0.3 的右键导出取代**）
-- 模块设计稿：`docs/architecture/resource-manager-design.md`（v0.3）、`docs/architecture/core-design.md`（v0.9.3）、`docs/architecture/pool-manager-design.md`（v0.2.8）、`docs/architecture/logging-design.md`（v1.5）、`docs/architecture/event-bus-design.md`（v0.5.1）、`docs/architecture/audio-manager-design.md`（v0.1）、`docs/architecture/ui-manager-design.md`（v0.3）
+- 模块设计稿：`docs/architecture/resource-manager-design.md`（v0.3）、`docs/architecture/core-design.md`（v0.9.3）、`docs/architecture/pool-manager-design.md`（v0.2.8）、`docs/architecture/logging-design.md`（v1.5）、`docs/architecture/event-bus-design.md`（v0.5.1）、`docs/architecture/audio-manager-design.md`（v0.2）、`docs/architecture/ui-manager-design.md`（v0.3）
 - 启动 / 装配机制：`docs/architecture/bootstrap-design.md`（v1.0）
 - 本地教程（**不入库**，`.gitignore` 白名单外）：`LocalNotes/rx-tutorial.md`、`LocalNotes/r3-tutorial.md`、`LocalNotes/logging-implementation-guide.md`
 - 规范：`docs/standards/git-workflow.md`、`docs/standards/agent-role.md`、`docs/standards/naming-convention.md`（Z/IZ 前缀约定）
-- 进度记忆：`docs/memory/progress-2026-09-05-06.md`、`docs/memory/progress-2026-09-10.md`、`docs/memory/progress-2026-09-13.md`（最新）
+- 进度记忆：`docs/memory/progress-2026-09-05-06.md`、`docs/memory/progress-2026-09-10.md`、`docs/memory/progress-2026-09-13.md`、`docs/memory/progress-2026-09-26.md`（最新）
 
 ## 变更记录
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| **v0.13** | 2026-09-26 | **音频模块实现落地（M2 完成，待验收）**：§8——M2 状态改为"**实现完成，待 Unity 手工试听逐条验收**"（附 commit `c0dd834` 与遗留清单：音效淡出 §13-6、测试用例、Mixer 降级 try/catch）；§5.2 设计稿版本更新为 **v0.2**；附录同步设计稿版本并补 `progress-2026-09-26.md`；头部变更记录同步。另记两处**随实现产生的契约变更**：① **`ZBootPhase` 新增 `Audio` 阶段**（编排顺序 `Pools → Audio → UI`，见 `bootstrap-design.md` v1.1）；② **`IZAudioManager.PlaySfxAsync` 的 options 参数去掉 `in`**（`in` 参数与 `async` 方法不兼容，编译器报 CS1988） |
 | v0.12 | 2026-09-13 | **里程碑顺序调整（音频先行）+ 音频设计稿落地**：§8——**M2 改为音频管理器**（时间提前到 2026-09 下~10）、**M3 改为 UI 核心**（顺延，内容补"UI 音效对接"）、M5 收编"三模块整合 + Samples"；依据：**UI 管理器要绑定 UI 音效，故音频先做**。§5.2 补"UI 音效对接"与**关键实现约束**（`AudioSource` 无法实现 `IZObjectPoolItem` → 用包装组件 `PooledAudioSource`；原型母本代码创建、零资源依赖；先清池再销毁原型）+ 设计稿指向；§5.3 补"UI 音效"要点（注入抽象接口 + `Preload` 预热保证"点了就响"）+ 设计稿指向；§4.2 加 **D8 待定注**（依赖链是否改成 `… → Audio → UI`）；附录补 `audio-manager-design.md` v0.1、`ui-manager-design.md` 更新到 v0.3 |
 | v0.11 | 2026-09-13 | **状态刷新（M1 完成 + 文档/版本同步）**：§8 里程碑——**M1 地基标记完成**（日志与事件总线实现并自测通过 19/19 + 8/8、池 v1 定稿、资源管理器实现；仅测试用例待补）、**M2 由"未开始（R3 待引入）"改为"设计就绪，待实现"**（`ui-manager-design.md` v0.2、D1–D7 已定、R3 阻塞解除）；§2 现状盘点刷新（已有代码含日志/事件总线实现与 `Zipper.Tests` 骨架、设计文档清单与版本）；§5.6 基础设施改写为实况（**日志 v1.5**：caller 四件套 + 前缀两分支 + `LogFormatter` 集中格式化；**事件总线 v0.5.1**：具体契约要点）；§9 风险表——"MVVM 复杂度失控"的应对落实为 D1 最小自研，**新增"UI 池化复用的绑定泄漏"风险行**；附录补 `event-bus-design.md` 与 `ui-manager-design.md`、补 `progress-2026-09-13.md` |
 | v0.10 | 2026-09-12 | **按实现修正 Core 的依赖边界**：`Zipper.Core` 引 **UniTask**（异步契约 `IZModuleBootstrap.InitializeAsync` 返回 `UniTask` 的必然结果），文中"零框架依赖 / references 为空"的表述统一改为"**仅依赖 UniTask**（不引 VContainer / Addressables / R3）"——涉及 §4.1 原则 5、§4.2 架构图与 asmdef 引用要求、§3 事件总线行、§9 风险表；并同步 §2 现状盘点（用户代码已提交：事件总线骨架、启动契约、日志模块、池模块、Bootstrapper 迁移、DI 接线） |
