@@ -4,7 +4,12 @@
     "references": [
         "UnityEngine.TestRunner",
         "UnityEditor.TestRunner",
-        "Zipper.Core"
+        "Zipper.Core",
+        "Zipper.Pool",
+        "Zipper.Resources",
+        "Zipper.Audio",
+        "UniTask",
+        "VContainer"
     ],
     "includePlatforms": [
         "Editor"

@@ -33,8 +33,10 @@ namespace Zipper.Audio
         static readonly ZAudioPlayOptions DefaultOptions = new ZAudioPlayOptions();
 
         internal bool IsBgmPlaying => _bgm != null && _bgm.IsPlaying;
-        static float ToDb(float v01) => v01 <= 0.0001f ? -80f : Mathf.Log10(v01) * 20f;
-        static string VolumeKey(ZAudioBus bus) => $"Zipper.Audio.Volume.{bus}";
+
+        // internal（而非 private）：供 EditMode 测试直接断言（见 Zipper.Tests；由 AssemblyInfo.cs 的 InternalsVisibleTo 打通）
+        internal static float ToDb(float v01) => v01 <= 0.0001f ? -80f : Mathf.Log10(v01) * 20f;
+        internal static string VolumeKey(ZAudioBus bus) => $"Zipper.Audio.Volume.{bus}";
 
         public ZAudioManager(IZObjectPoolManager poolManager, IZResourceManager resourceManager, IZLogger logger, ZAudioOptions options)
         {
@@ -182,7 +184,7 @@ namespace Zipper.Audio
         {
             if (handle.Item == null)
             {
-                _bgm.Stop(fadeOutSeconds);
+                _bgm?.Stop(fadeOutSeconds);   // _bgm 仅在 AttachRoot 之后存在（时序异常/测试下可能为 null）
                 handle.MarkFinished();
                 return;
             }
