@@ -48,3 +48,5 @@ MonoBehaviour:
     TypeName: 
   autoRun: 1
   autoInjectGameObjects: []
+  _panelRoot: {fileID: 242282166815005994, guid: 1e6bbd4ec4c060d46ae365957a191c59,
+    type: 3}

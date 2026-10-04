@@ -11,6 +11,7 @@ namespace Zipper.UI.Register
         public Type ViewModelType { get; }
         public Type ViewType { get; }
         public string Address { get; }
+        public bool OwnsViewModel { get; }
 
         public Action<IZObjectPoolManager, GameObject> CreatePool { get; }
         public Action<IZObjectPoolManager> DestroyPool { get; }
@@ -19,7 +20,7 @@ namespace Zipper.UI.Register
         public PrefabAsset Prefab { get; set; }
         public bool PoolCreated { get; set; }
 
-        public Registration(Type vmType, Type viewType, string address,
+        public Registration(Type vmType, Type viewType, string address, bool ownsViewModel,
                             Action<IZObjectPoolManager, GameObject> createPool,
                             Action<IZObjectPoolManager> destroyPool,
                             Func<IZObjectPoolManager, ZPanel> getItem)
@@ -27,6 +28,7 @@ namespace Zipper.UI.Register
             ViewModelType = vmType;
             ViewType = viewType;
             Address = address;
+            OwnsViewModel = ownsViewModel;
             CreatePool = createPool;
             DestroyPool = destroyPool;
             GetItem = getItem;

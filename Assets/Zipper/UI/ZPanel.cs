@@ -1,3 +1,4 @@
+using R3;
 using UnityEngine;
 using Zipper.Pool;
 
@@ -5,6 +6,10 @@ namespace Zipper.UI
 {
     public abstract class ZPanel : MonoBehaviour, IZObjectPoolItem
     {
+        internal System.Action CloseRequester { get; set; }
+
+        protected DisposableBag _bag;
+
         public IZObjectPoolItem.ReturnToPoolDelegate ReturnToPool { get; set; }
 
         protected ZPanelViewModel ViewModel { get; private set; }
@@ -31,12 +36,14 @@ namespace Zipper.UI
 
         internal void Bind(ZPanelViewModel vm)
         {
+            _bag.Clear();
             ViewModel = vm;
             OnBind(vm);
         }
 
         internal void Unbind()
         {
+            _bag.Dispose();
             OnUnbind();
             ViewModel = null;
         }
@@ -54,6 +61,11 @@ namespace Zipper.UI
         internal void ReturnSelf()
         {
             ReturnToPool?.Invoke(this);
+        }
+
+        protected void RequestClose()
+        {
+            CloseRequester?.Invoke();
         }
 
         protected virtual void OnCreate() { }

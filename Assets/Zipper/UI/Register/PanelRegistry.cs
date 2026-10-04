@@ -18,7 +18,7 @@ namespace Zipper.UI.Register
             _logger = logger;
         }
 
-        public void Register<TViewModel, TView>(string address)
+        public void Register<TViewModel, TView>(string address, bool ownsViewModel)
                             where TViewModel : ZPanelViewModel
                             where TView : ZPanel
         {
@@ -39,6 +39,7 @@ namespace Zipper.UI.Register
                 vmType,
                 typeof(TView),
                 address,
+                ownsViewModel,
                 (poolManager, prefab) => poolManager.CreatePool(new Pool.ZPoolOptions<TView> { Prefab = prefab }),
                 (poolManager) => poolManager.DestroyPool<TView>(),
                 (poolManager) => poolManager.Get<TView>()

@@ -4,10 +4,15 @@ namespace Zipper.UI
 {
     public class ZPanelHandle
     {
+        ZPanelManager _panelManager;
+        UniTaskCompletionSource _tcs;
+
         public bool IsOpen { get; private set; }
 
-        internal ZPanelHandle()
+        internal ZPanelHandle(ZPanelManager panelManager)
         {
+            _panelManager = panelManager;
+            _tcs = new UniTaskCompletionSource();
             IsOpen = true;
         }
 
@@ -16,13 +21,18 @@ namespace Zipper.UI
             if (!IsOpen)
                 return;
 
-            IsOpen = false;
+            _panelManager.Close(this);
         }
 
         public UniTask WaitCloseAsync()
         {
-            //TODO 之后改
-            return UniTask.WaitUntil(() => !IsOpen);
+            return _tcs.Task;
+        }
+
+        internal void MarkClosed()
+        {
+            IsOpen = false; 
+            _tcs.TrySetResult();
         }
     }
 }
