@@ -1,6 +1,6 @@
 # Zipper UI 管理器设计（Zipper.UI — uGUI + MVVM）
 
-> 状态：**v0.3 草稿，待审阅**（D1–D7 已定；**新增 D8 = UI 音效依赖方向待定**，见 §13.2）
+> 状态：**v0.4（2026-10-04：v0.3 已获使用者批准为实现依据；本版补 §4.1 的 `ZPanelHandle` 说明、新增 §6.4 组件引用与清理约定、并回填 D8 定案——D1–D8 现已全部定案）**
 > 定位：UI 管理器 MVP 的**契约、机制与边界**——面板栈与生命周期、View 池化与解绑/重绑协议、最小 MVVM 绑定层、加载与装配。**只给设计思路与思路级伪代码，不含实现代码**。
 > 实施归属：AI 只负责架构设计与思路级伪代码；**代码实现由使用者完成**（`docs/standards/agent-role.md`）。
 > 关联：`docs/planning/technical-roadmap.md` §5.3（UI 技术路线）/§5.5（组装层）/§5.4.1（对象池）/§4.2（依赖链）、`docs/architecture/pool-manager-design.md`、`docs/architecture/resource-manager-design.md`、`docs/architecture/event-bus-design.md`、`docs/architecture/bootstrap-design.md`、`docs/standards/naming-convention.md`
@@ -115,6 +115,28 @@ public interface IZPanelManager : IDisposable
 
 - **面板按 VM 类型寻址**（`OpenAsync<ShopViewModel>()`）：类型安全、零反射、与池的 `typeof(T)` 风格一致；
 - `ZPanelOpenOptions`：层级、遮罩行为（点遮罩是否关闭）、`SingleInstance`（重复打开是"置顶复用"还是"再开一个"）、是否缓存 View、VM 生命周期（见 §7.3）。
+
+#### `ZPanelHandle`：一次"打开"的凭据（**它"不是什么"同样重要**）
+
+| 它有（契约） | 它**没有**（重要）✗ |
+|---|---|
+| `Close()`（幂等）/ `WaitCloseAsync()` / `IsOpen` | **不给** `ZPanel` 实例（拿不到 View，绕不过框架） |
+| — | 不管母本 `PrefabAsset`、不管池、不管 VM 释放（都是框架的活） |
+| — | **不持有** `AssetHandle` —— 两者是**各自独立**的凭据，不是封装/继承关系 |
+
+> **"风格同 `AssetHandle`"只指 API 范式一致**（谁签发谁持有 / 有状态查询 / 操作幂等）✓ **不是类型关系** ✓
+
+**内部大概持有**（实现细节，S3 实施时定稿）：所属面板或栈条目的引用、`IsOpen` 状态、一个"关闭完成"的 `UniTaskCompletionSource`（支撑 `WaitCloseAsync`）、对 `ZPanelManager` 的反向引用（`Close()` 转发）。
+
+**为什么必须有它**：① 同一 VM 可开出多个面板（`SingleInstance = false`）→ 要区分"**哪一次**打开"；② `WaitCloseAsync` 需要一个"这一次关闭"的载体；③ 幂等 `Close` 需要"我关过了吗"的状态。
+
+**使用者视角的关键差异（最容易踩的认知坑）**：
+
+| | `AssetHandle<T>` | `ZPanelHandle` |
+|---|---|---|
+| 使用者**必须**释放吗 | ✅ 必须（漏了就是泄漏） | ❌ **不必**（忘了 `Close()` 只是"面板还开着"，不会弄坏资源） |
+| 释放动作 | `Release()` → 卸载/记账 | `Close()` → 关面板 + View 归池 |
+| 使用者要不要懂资源/池 | 要（它就是资源） | **不要**（框架代管） |
 
 ### 4.2 生命周期状态机
 
@@ -240,6 +262,34 @@ protected override void OnUnbind()
 
 VM 里**不允许出现 `UnityEngine` 类型**（更别说 `GameObject`/`Transform`）→ 于是它能在纯 C# 测试里 `new` 出来（依赖用假实现或简单桩），驱动 `ReactiveProperty` 断言状态变化。这条是"MVVM 有价值"的前提，写进纪律。
 
+### 6.4 组件引用与清理约定（使用方必须遵守的写法）
+
+#### 组件引用：`[SerializeField]` 私有字段 + Inspector 拖
+
+（拖一次存进 **Prefab** 里，不是每次运行都要拖 ✓）
+
+| 做法 | 结论 |
+|---|---|
+| `[SerializeField] Button _buyButton;` | ✅ **唯一推荐**：零反射、IL2CPP 安全、编译期类型检查、改代码看得见引用 |
+| `GetComponent` / `transform.Find("A/B")` | ❌ 名字/路径硬编码 → **改个节点名静默失效**，性能也差 |
+| 特性标注 + 反射 / 代码生成自动绑定 | ❌ §12 明确不做（与"零反射 / IL2CPP 安全"取向冲突，且属过度设计高风险区） |
+
+#### 清理机制：**两套，别混**（"复用不串台、不泄漏"的全部秘密）
+
+| 绑定物 | 是 `IDisposable`？ | 清在哪 | 漏了的症状 |
+|---|---|---|---|
+| R3 订阅（`Subscribe(...)` 的返回值、`ReactiveProperty`、`ReactiveCommand`） | ✅ 是 | `.AddTo(ref _bag)` → 框架在 `Unbind()` 里 `_bag.Dispose()` | 旧 VM 钉住 View → **串台 + 泄漏** |
+| **uGUI 事件**（`button.onClick.AddListener(...)`） | ❌ **不是** | **使用方自己在 `OnUnbind()` 里 `RemoveAllListeners()`** | 复用**叠加监听器**：开 50 次 → **点一下触发 50 次** ✗ |
+| 显示态（`Text.text` / `Image.sprite` / `InputField.text`） | ❌ 不是 | `OnUnbind()` 里手动清空 | "上一位玩家的金币数"印在新面板上 ✗ |
+
+**三条纪律**：
+
+1. View 里**每次** `Subscribe` 都以 `AddTo(ref _bag)` 收尾；
+2. **uGUI 事件不进袋子**（它不是 `IDisposable`）→ 必须成对写 `AddListener` / `RemoveAllListeners`；
+3. **不要拿 `AddTo(this)` 当解绑**：它只在**对象销毁**时退订，而池化 View 关闭时**不销毁** ✗（它只能是"真销毁"时的双保险）。
+
+> 注：`ReactiveCommand<T>` 本身也是 `IDisposable`（构造时内部订阅了 canExecute 源）→ **VM 里创建的命令也要进袋子** ⚠️ 漏了就是"每次新建 VM 留一条残留订阅"，在池化面板上会累积。
+
 ---
 
 ## 7. 加载、池化与装配
@@ -317,7 +367,7 @@ PublishAsync 前的注册（组装层或 UI Bootstrap）：
 1. **`Play` 不抛**：地址无效/加载失败 → 记 Error 后静默返回（UI 点击不因缺音效而崩）；
 2. **不产生 UI 需要管理的凭据**：便捷入口内部拿句柄、播完自动归还。
 
-**依赖方向（新增待决 D8，见 §13.2）**：
+**依赖方向（**D8 已定：方案 ②**，见 §13.2）**：
 
 | 方案 | 做法 | 取舍 |
 |---|---|---|
@@ -421,11 +471,11 @@ Assets/Zipper/UI/
 | C1 | 附录 A 里 Unity 官方 MVVM（App UI）的判据 | 结论（不引入）**不依赖**该项（理由 ② 独立成立）；但"App UI 的绑定层是否只服务 UI Toolkit"这条待使用者一手确认后定稿 |
 | C2 | `ZPanelOpenOptions` 的字段集合 | v1 先按 §4.1 列的四项（层级 / 遮罩行为 / `SingleInstance` / 缓存与 VM 生命周期），实现时若有增补再回写 |
 
-### 13.2 新增待决（来自音频接洽，2026-09-13）
+### 13.2 D8 已定案（来自音频接洽：2026-09-13 提出 / **2026-10-04 拍板**）
 
-| # | 决策 | 我的建议 | 影响 |
+| # | 决策 | **结论** | 落点 |
 |---|---|---|---|
-| **D8** | **UI 音效的依赖方向**（§8.1 三方案；`audio-manager-design.md` §9.2 是**同一个决策**，编号统一用 D8） | **方案 ②：UI 定义 `IZUISfx` 抽象 + 组装层注入适配** | 决定 `roadmap §4.2` 依赖链是否要改成 `Core → {Pool,Resources} → Audio → UI`；决定 UI 模块是否保持"可裁剪" |
+| **D8** | **UI 音效的依赖方向**（§8.1 三方案；`audio-manager-design.md` §9.2 是**同一个决策**，编号统一用 D8） | ✅ **方案 ②：UI 定义 `IZUISfx` 抽象 + 组装层注入适配** | `Zipper.UI` **不引** `Zipper.Audio`；UI 内部定义 `IZUISfx { void Play(string address); void Preload(string address); }` + 一个"什么都不做"的空实现；组装层（同时可见 UI 与 Audio）注册薄适配（约 10 行）。**`roadmap §4.2` 的依赖链不改**（`Core → {Pool,Resources} → {Audio, UI}` 保持并列）✓ UI 模块保持"可裁剪"✓ 可单测（塞假实现）✓ |
 
 ---
 
@@ -456,6 +506,7 @@ Assets/Zipper/UI/
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
+| **v0.4** | 2026-10-04 | **批准为实现依据 + 三处补全**：① **v0.3 获使用者批准**（此前状态为"草稿，待审阅"）；② §4.1 新增 **`ZPanelHandle` 小节**（它有/它没有/内部大概持有/为什么必须有它、与 `AssetHandle` 的使用者视角差异——"必须释放 vs 不必"）；③ 新增 **§6.4 组件引用与清理约定**（`[SerializeField]` 拖引用；**两套清理机制**：R3 订阅进 `_bag` vs uGUI 事件必须 `RemoveAllListeners`；`AddTo(this)` 不能当解绑；命令也要进袋子）；④ **D8 定案回填**（§13.2 由"新增待决"改为"已定案：方案 ② UI 定义 `IZUISfx` + 组装层适配"，§8.1 同步）→ **D1–D8 全部定案** |
 | v0.3 | 2026-09-13 | **补「与音频的对接（UI 音效）」**（使用者提出"UI 管理器要绑定 UI 音效"）：新增 **§8.1**（UI 需要什么 / 音频侧提供什么 / **两条必须保证：`Play` 不抛 + 不产生需 UI 管理的凭据** / 依赖方向三方案对照 / UI 侧使用形态 + "点击路径不同步等加载"纪律）；§8 边界表补"音频"行；新增 **D8**（UI 音效依赖方向；推荐方案 ②：UI 定义 `IZUISfx` + 组装层适配）；配套产出 `docs/architecture/audio-manager-design.md` v0.1（使用者决定音频先行） |
 | v0.2 | 2026-09-13 | **D1–D7 由使用者拍板落定**（§13 由"待决策项"改为"已定决策"）：D1 **最小自研**绑定层；D2 **复用** `IZObjectPoolManager`+`ZObjectPool<T>`；D3 **独立** `Zipper.UI` asmdef；D4 VM **默认 Transient + 面板关闭时由管理器 Dispose**（常驻面板显式声明）；D5 返回键由**输入层**调用、框架不吞；D6 测试落**现有 `Zipper.Tests`**；D7 注册表**归 UI 模块**。同步 §5.2/§9/§11 里指向 D 项的表述；新增 §13.1「仍待确认」（App UI 判据、`ZPanelOpenOptions` 字段集合） |
 | v0.1 | 2026-09-13 | 初稿（S1 经使用者批准，方案 A）：目标与范围、前置事实（既有契约 / R3 能力 / VContainer Transient 不跟踪的源码事实）、分层与职责、面板栈与生命周期状态机与钩子顺序表、异步取消与失败语义、**View 池化与解绑/重绑协议**、最小 MVVM 绑定层（含绑定模板与 VM 可测性纪律）、加载与装配（显式注册表、**UI 管理器充当母本托管的上层组合器**）、VM 所有权规则、与总线/资源/池/日志的边界、目录与程序集、分阶段实施、10 条验收、明确不做 9 项、待决 D1–D7、附录 A（最小自研 vs 社区 MVVM）、附录 B（`AddTo(this)` 的池化陷阱） |
