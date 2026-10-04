@@ -13,11 +13,20 @@
 
 | 跟踪 | 内容 |
 |---|---|
-| `Assets/Zipper/` | 框架全部代码：`.cs` + `.asmdef` + **`.meta`**（GUID 必须随包，asmdef 引用与导入别处不脱钩） |
+| `Assets/Zipper/` | 框架全部代码：`.cs` + `.asmdef` + **`.meta`**（GUID 必须随包，asmdef 引用与导入别处不脱钩）+ **框架自带的场景侧资产**（见 §1.1 豁免） |
 | `docs/` | 全部文档（planning / research / architecture / standards / memory） |
 | `.gitignore` | 白名单本身 |
 
-**一律不入库**（被 `.gitignore` 排除，勿用 `git add -f` 强加）：Unity 工程其它目录（`Assets/` 下 Zipper 之外、`Library/`、`Temp/`、`obj/`、`Logs/`、`UserSettings/`、`Packages/`、`ProjectSettings/`）、`.csproj/.sln` 等由 Unity 生成的工程文件、场景/预制体等美术资源。
+**一律不入库**（被 `.gitignore` 排除，勿用 `git add -f` 强加）：Unity 工程其它目录（`Assets/` 下 Zipper 之外、`Library/`、`Temp/`、`obj/`、`Logs/`、`UserSettings/`、`Packages/`、`ProjectSettings/`）、`.csproj/.sln` 等由 Unity 生成的工程文件、**业务工程自己的**场景/预制体等美术资源。
+
+### 1.1 豁免：框架自带的场景侧资产**必须**入库（2026-10-04 使用者拍板）
+
+| 它是什么 | 入库？ | 例 |
+|---|---|---|
+| **框架的一部分** —— 缺了框架就跑不起来 / 使用者得手工重建 | ✅ **入库** | `Assets/Zipper/DI/Prefabs/GameLifetimeScope.prefab`（组装层引导预制体，**"拖出来就能用，不用自己手动创建"**） |
+| **业务内容** —— 具体游戏的界面 / 美术 / 数据 | ❌ 不入库 | 业务面板预制体、图集、音频素材 |
+
+> 判据一句话：豁免的是"**框架自身可分发、可复用**"的资产 ✓ 放进 `Assets/Zipper/` 就是为了让它随 `.unitypackage` 一起交付 ✓ 与白名单模式不冲突 ✓
 
 > 放文件须知：想让某个文件被跟踪，必须放在 `Assets/Zipper/` 或 `docs/` 内；放外面 commit 不会包含它（也别用 `-f` 绕过）。
 
