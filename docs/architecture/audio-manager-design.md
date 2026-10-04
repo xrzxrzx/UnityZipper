@@ -258,6 +258,8 @@ PlayBgmAsync(address, crossfade):
 - Mixer 资产里有 5 个组：`Master / BGM / SFX / Voice / UI`（`UI` 组挂在 `SFX` 下或与 `SFX` 平级，由使用方的 Mixer 资产决定）；
 - `ZAudioBus` 枚举 → Mixer 组名的映射写在 `ZAudioOptions` 里（**不在代码里硬编码组名字符串**，便于业务改名）；
 - 播放时把 `AudioSource.outputAudioMixerGroup` 设为对应的组（`PooledAudioSource` 在播放前设置）。
+- **⚠️ `AudioMixer` 是"框架自带的必需资产"**（`Assets/Zipper/Audio/Mixer/ZipperAudioMixer.mixer`，随包分发）→ **加载失败不做降级**：那说明**部署缺文件**（框架不完整），应当直接失败、把问题暴露出来 ✓
+  - 这与"业务音频资源（clip）加载失败**不抛**"是**两件事**，别混：前者是**框架自身完整性**（缺了就是装错了），后者是**使用工程的业务资源**（少一个音效不该让 UI 点击崩）✓
 
 ### 7.2 线性音量 ↔ dB
 
@@ -440,7 +442,7 @@ Assets/Zipper/Audio/                              （程序集 Zipper.Audio）
 
 | # | 决策 | 我的建议 | 状态 / 影响 |
 |---|---|---|---|
-| **D8** | UI 音效的依赖方向（§9.2 三方案；**与 `ui-manager-design.md` §13.2 同一决策**，编号统一用 D8） | **方案 ②：UI 定义 `IZUISfx` 抽象 + 组装层注入适配** | ⏳ **仍未定**（属 UI 阶段的事）；决定 roadmap §4.2 依赖链是否改成 `Audio → UI`；决定 UI 模块可裁剪性 |
+| **D8** | UI 音效的依赖方向（§9.2 三方案；**与 `ui-manager-design.md` §13.2 同一决策**，编号统一用 D8） | **方案 ②：UI 定义 `IZUISfx` 抽象 + 组装层注入适配** | ✅ **已定案（2026-10-04）**：`Zipper.UI` **不引** `Zipper.Audio`；UI 侧定义 `IZUISfx` + 空实现，组装层注册薄适配（约 10 行）。**`roadmap §4.2` 的依赖链保持不变**（`Core → {Pool,Resources} → {Audio, UI}` 并列）✓ UI 模块保持可裁剪 ✓ |
 | **D2** | tick 驱动：VContainer `ITickable` vs 自带 driver 组件 | **`ITickable`**（不新增常驻 GameObject） | ✅ **已定案（2026-09-26）**：`ZAudioManager : IZAudioManager, ITickable`，注册 `.As<ITickable>()`；详见 §3.3 |
 | **D3** | fade 由谁推进：各自 UniTask 循环 vs tick 统一推进 | **各自 UniTask 循环**（tick 只做"播完检测 + 归还"） | ✅ **已定案**（实现即如此：壳内 per-instance 取消令牌） |
 | **D4** | 池满时的策略 | **丢弃 + Debug 日志**（v1） | ✅ **已定案**：池满 `Get` 返回 null → 音频侧记 **Warning** 后丢弃（池自身已记 Error，音频侧降级避免重复刷） |
@@ -468,5 +470,6 @@ Assets/Zipper/Audio/                              （程序集 Zipper.Audio）
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
-| **v0.2** | 2026-09-26 | **按实现回填（音频模块落地）**：① 待决项定案——**D2** `ITickable`（附 VContainer 1.19 源码核对：收集标准 / dispatcher 自动注册 / tick 时机）、**D3** 各自 UniTask 循环、**D4** 池满丢弃（音频侧记 Warning）、**C1/C2** 字段集、**C3** v1 不自动暂停；② §4.4 公开 API 对齐实现——`PlaySfxAsync` 的 options **去掉 `in`**（`in` 与 `async` 不兼容，CS1988）并说明 class + `?? DefaultOptions` 的配套约定，`Volume01` → **`Volume`**；③ §11 目录与程序集对齐实现——新增 `ZAudioBootstrapper.cs` 与 `Mixer/ZipperAudioMixer.mixer`、**内部命名空间 `Zipper.Audio.Internal`**、`AttachRoot` 机制、BGM 句柄的"池外语义"、**强制的销毁顺序**（归还 → 拆池 → 释放 Mixer → 销毁原型 → 销毁 root）；④ §13 补**实施进度表**（哪些就绪、6 的淡出待补、8 待 Mixer 接入、测试待补）。实现提交：`c0dd834` |
+| **v0.2.1** | 2026-10-04 | 两处回填：① §7.1 新增——**`AudioMixer` 是框架自带的必需资产，加载失败不做降级**（那是"部署缺文件/框架不完整"，应直接失败暴露），并明确它与"业务 clip 加载失败不抛"是两件事；② §15 的 **D8 定案回填**（由"仍未定"改为"已定：方案 ②"，`roadmap §4.2` 依赖链保持不变）。依据：使用者判定"Mixer 与框架是一体的专用资产，加载失败即框架文件缺失"；D8 于 2026-10-04 拍板方案 ② |
+| v0.2 | 2026-09-26 | **按实现回填（音频模块落地）**：① 待决项定案——**D2** `ITickable`（附 VContainer 1.19 源码核对：收集标准 / dispatcher 自动注册 / tick 时机）、**D3** 各自 UniTask 循环、**D4** 池满丢弃（音频侧记 Warning）、**C1/C2** 字段集、**C3** v1 不自动暂停；② §4.4 公开 API 对齐实现——`PlaySfxAsync` 的 options **去掉 `in`**（`in` 与 `async` 不兼容，CS1988）并说明 class + `?? DefaultOptions` 的配套约定，`Volume01` → **`Volume`**；③ §11 目录与程序集对齐实现——新增 `ZAudioBootstrapper.cs` 与 `Mixer/ZipperAudioMixer.mixer`、**内部命名空间 `Zipper.Audio.Internal`**、`AttachRoot` 机制、BGM 句柄的"池外语义"、**强制的销毁顺序**（归还 → 拆池 → 释放 Mixer → 销毁原型 → 销毁 root）；④ §13 补**实施进度表**（哪些就绪、6 的淡出待补、8 待 Mixer 接入、测试待补）。实现提交：`c0dd834` |
 | v0.1 | 2026-09-13 | 初稿（使用者要求"音频先行"，因 UI 管理器要绑定 UI 音效）：目标与范围、前置事实（既有契约 / **Unity 音频事实** / 容器事实）、分层与职责（含 tick 驱动的两方案）、播放模型（三类播放 + **`AudioSource` 不能直接池化的关键约束与包装组件方案** + **运行时原型母本、零资源依赖** + 池满语义 + 公开 API）、播放句柄与生命周期表、淡入淡出（unscaled 时间、per-instance 取消令牌、BGM 双 source 交叉淡入）、分组与音量（dB 换算、PlayerPrefs key 约定、启动读回）、BGM 独占通道、**§9 与 UI 的对接（UI 音效：音频侧提供的 API 与两条保证 + 依赖方向三方案对照，推荐方案 ②）**、与资源/池/总线/日志/组装层的边界、目录与程序集、分阶段实施、11 条验收、明确不做 8 项、待决 D8（与 UI 稿同一编号）与 D2–D4、C1–C3、附录（与既有模块约定的防漂移对照） |

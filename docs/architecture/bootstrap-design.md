@@ -217,7 +217,7 @@ builder.RegisterEntryPoint<ZipperBootstrapper>(Lifetime.Singleton);
 | **Events (100)** | 事件总线 | 若需要：装配总线实例 / 清理策略 | 日志（可选，用于告警） |
 | **Resources (200)** | 资源管理器 | 初始化 Addressables（加载 catalog）；可选预下载 / 预热 | 日志 |
 | **Pools (300)** | 对象池管理器 | 若需要：预热常用池；建立池与母本的登记 | 日志、资源（母本来源） |
-| **Audio** | 音频管理器 | 建 `[Zipper] AudioRoot` + 运行时原型母本 → `CreatePool<PooledAudioSource>`；把 root 交给音频管理器（BGM 双源挂其下）；加载 `AudioMixer`（**失败降级、不阻断引导**） | 日志、资源（Mixer）、池 |
+| **Audio** | 音频管理器 | 建 `[Zipper] AudioRoot` + 运行时原型母本 → `CreatePool<PooledAudioSource>`；把 root 交给音频管理器（BGM 双源挂其下）；加载 `AudioMixer`（**框架自带必需资产：加载失败 = 部署缺文件 → 直接失败，不做降级**） | 日志、资源（Mixer）、池 |
 | **UI** | UI 管理器（将来） | 建 UI 根节点 / 层级、加载常驻面板 | 日志、资源、池、事件总线、**音频（UI 音效）** |
 
 > 顺序的"必要性"都来自**跨阶段依赖**：后一阶段的模块会用到前一阶段的服务（最典型：所有模块都要打日志 → 日志必须最先）。
@@ -254,7 +254,8 @@ builder.RegisterEntryPoint<ZipperBootstrapper>(Lifetime.Singleton);
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
-| **v1.1** | 2026-09-26 | **同步实现（音频阶段落地）**：§3 `ZBootPhase` 落为六档 `Logging/Events/Resources/Pools/Audio/UI`（去掉显式数值，写明"编排才是执行顺序的唯一真源"）；§4 编排补 `Audio`、`UI` 两次 `RunPhase`；§1.1/§2 的 Bootstrap 清单对齐实现类名（`ZLoggerBootstrapper` / `ZResourcesBootstrapper` / `ZAudioBootstrapper`），并注明 Events/Pools 阶段暂无实现；§10 阶段清单新增 **Audio** 行（建根对象/原型/池 + 加载 Mixer，失败降级），UI 行补音频依赖；§12 待决项"五档"改"六档"。依据：音频模块实现落地（commit `c0dd834`） |
+| **v1.2** | 2026-10-04 | **更正音频阶段的失败语义（使用者拍板）**：§10 的 Audio 行由"加载 `AudioMixer`（失败降级、不阻断引导）"改为「**加载失败 = 部署缺文件 → 直接失败，不做降级**」。依据：`AudioMixer` 是**框架自带的必需资产**（`Assets/Zipper/Audio/Mixer/ZipperAudioMixer.mixer`，随包分发），缺失属于"框架不完整"而非"业务资源缺失"→ 应当暴露而不是吞掉 ✓（v1.1 该行措辞据此作废，历史条目保留不改） |
+| v1.1 | 2026-09-26 | **同步实现（音频阶段落地）**：§3 `ZBootPhase` 落为六档 `Logging/Events/Resources/Pools/Audio/UI`（去掉显式数值，写明"编排才是执行顺序的唯一真源"）；§4 编排补 `Audio`、`UI` 两次 `RunPhase`；§1.1/§2 的 Bootstrap 清单对齐实现类名（`ZLoggerBootstrapper` / `ZResourcesBootstrapper` / `ZAudioBootstrapper`），并注明 Events/Pools 阶段暂无实现；§10 阶段清单新增 **Audio** 行（建根对象/原型/池 + 加载 Mixer，失败降级），UI 行补音频依赖；§12 待决项"五档"改"六档"。依据：音频模块实现落地（commit `c0dd834`） |
 | v1.0.1 | 2026-09-12 | 措辞同步：Core 依赖边界更正为"**仅依赖 Unity + UniTask**"（契约的 `UniTask` 返回类型所致），详见 `core-design.md` v0.9.3 / `roadmap` v0.10 |
 | v1.0 | 2026-09-10 | 初稿：从 `logging-design.md` §5 迁出并扩展为通用机制——分层理由、`IZModuleBootstrap`/`ZBootPhase` 契约、总 Bootstrap 显式阶段编排（含四方案对照与"不用 R3"边界）、位置约定（注册 vs 初始化、现状改动点）、容器注册、`CancellationToken` 用法、失败策略、惰性初始化备选、各模块启动清单、验收与待决项 |
 
