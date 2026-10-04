@@ -59,7 +59,11 @@ namespace Zipper.UI
                 throw new InvalidOperationException($"面板母本不可用：{reg.Address}");
             }
 
-            var vm = (ZPanelViewModel)_resolver.Resolve(vmType);
+            if (!_resolver.TryResolve(vmType, out var vmObj) || vmObj is not ZPanelViewModel vm)
+            {
+                _logger.Error($"VM 未注册到容器：{vmType.Name}");
+                throw new InvalidOperationException($"VM 未注册到容器：{vmType.Name}");
+            }
             if (vm == null)
             {
                 _logger.Error($"VM 构造失败：{vmType.Name}");
@@ -69,12 +73,35 @@ namespace Zipper.UI
             var view = GetPanelItem(reg);
             if (view == null)
             {
-                vm.Dispose();
+                if (reg.OwnsViewModel)
+                    vm.Dispose();
                 throw new InvalidOperationException($"取面板实例失败：{reg.ViewType.Name}");
             }
 
-            view.Bind(vm);
-            view.Open();
+            try
+            {
+                view.Bind(vm);
+                view.Open();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"面板打开失败，已回滚：{reg.ViewType.Name}", ex);
+
+                try
+                {
+                    view.Unbind();
+                }
+                catch
+                {
+
+                }
+                ReturnPanel(view);
+
+                if (reg.OwnsViewModel)
+                    vm.Dispose();
+
+                throw;
+            }
 
             var handle = new ZPanelHandle(this);
             view.CloseRequester = () => Close(handle);
@@ -108,7 +135,17 @@ namespace Zipper.UI
             }
 
             reg.Prefab = prefab;
-            reg.CreatePool(_poolManager, prefab.Prefab);
+            try
+            {
+                reg.CreatePool(_poolManager, prefab.Prefab);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"面板池创建失败：{reg.Address}", ex);
+                prefab.Dispose();
+                reg.Prefab = null;
+                return false;
+            }
             reg.PoolCreated = true;
 
             return true;
@@ -198,10 +235,12 @@ namespace Zipper.UI
 
         private void CloseEntry(PanelStackEntry entry)
         {
+            if (!_stack.Remove(entry))
+                return;
+
             entry.View.Close();
             entry.View.Unbind();
 
-            _stack.Remove(entry);
             entry.View.CloseRequester = null;
             ReturnPanel(entry.View);
 
@@ -213,11 +252,29 @@ namespace Zipper.UI
 
         public void CloseAll(bool destroy = false)
         {
-            throw new System.NotImplementedException();
+            if (_disposed)
+                return;
+
+            var ordered = new List<PanelStackEntry>(_stack);
+
+            ordered.Sort((a, b) => a.Layer != b.Layer
+                ? b.Layer.CompareTo(a.Layer)
+                : b.Sequence.CompareTo(a.Sequence));
+
+            foreach (var e in ordered)
+                CloseEntry(e);
+
+            if (destroy)
+                ReleaseAllPools();
         }
 
         public void Dispose()
         {
+            if (_disposed)
+                return;
+
+            CloseAll(true);
+
             _disposed = true;
         }
 

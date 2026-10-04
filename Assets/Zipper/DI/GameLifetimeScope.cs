@@ -58,6 +58,7 @@ namespace Zipper.DI
             builder.Register<IZAudioManager, ZAudioManager>(Lifetime.Singleton).As<ITickable>();//音频管理器
             builder.RegisterInstance(new ZAudioOptions()).AsSelf();//音频配置
             builder.Register<IZPanelManager, ZPanelManager>(Lifetime.Singleton);//UI面板管理器
+            builder.Register<IZUISfx, ZUiSfxAdapter>(Lifetime.Singleton);//UI接音频
 
             #endregion
 
