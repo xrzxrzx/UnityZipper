@@ -10,6 +10,8 @@ using Zipper.Core.Logging;
 using Zipper.Pool;
 using Zipper.Resources;
 using Zipper.UI;
+using Zipper.Demo;
+using Cysharp.Threading.Tasks.Triggers;
 
 namespace Zipper.DI
 {
@@ -29,13 +31,23 @@ namespace Zipper.DI
 
         protected override void Configure(IContainerBuilder builder)
         {
-            if (_panelRoot != null)
+            // ── UI 层级根 ──
+            // 只接受【场景里】的实例：prefab 资产里的 GameObject 其 scene 是 invalid ✗
+            //   （在 prefab 实例的 Inspector 上拖引用只能拖到【资产】→ 那个引用无法作为层级父节点，
+            //     会让 ZPanelManager.Push 报 "SetParent ... resides in a Prefab Asset" ✗）
+            // 没配 / 配成了资产 → 直接运行时自建 5 层层级 ✓（从此不依赖任何场景引用 ✓）
+            if (_panelRoot != null && _panelRoot.gameObject.scene.IsValid())
             {
                 builder.RegisterInstance(_panelRoot);
             }
             else
             {
-                Debug.LogError("[Zipper] GameLifetimeScope 未配置 ZPanelRoot");
+                if (_panelRoot != null)
+                    Debug.LogWarning("[Zipper] GameLifetimeScope 的 ZPanelRoot 指向的是 Prefab 资产（不是场景实例）→ 已忽略，改为自动创建层级");
+                else
+                    Debug.Log("[Zipper] 未配置 ZPanelRoot → 已自动创建 5 层层级（Background/Main/Popup/Toast/Loading）");
+
+                builder.RegisterInstance(ZPanelRoot.CreateRuntime());
             }
 
             #region Bootstrappers
@@ -74,6 +86,9 @@ namespace Zipper.DI
             ConfigureProject(builder);
 
             #endregion
+
+            builder.Register<CounterViewModel>(Lifetime.Transient);   // ★ VM 必须注册到容器
+            builder.Register<SyncViewModel>(Lifetime.Transient);
         }
 
         /// <summary>
@@ -84,6 +99,8 @@ namespace Zipper.DI
         {
             //示例
             //RegisterPanel<TestPanelViewModel, TestPanel>(builder, Lifetime.Transient, "UI/TestPanel");
+            RegisterPanel<CounterViewModel, CounterPanel>(builder, Lifetime.Transient, "UI/CounterPanel");
+            RegisterPanel<SyncViewModel, SyncPanel>(builder, Lifetime.Transient, "UI/SyncPanel");
         }
     }
 }
