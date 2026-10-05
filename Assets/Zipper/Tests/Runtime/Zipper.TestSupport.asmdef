@@ -1,26 +1,16 @@
 {
-    "name": "Zipper.Tests",
+    "name": "Zipper.TestSupport",
     "rootNamespace": "",
     "references": [
-        "UnityEngine.TestRunner",
-        "UnityEditor.TestRunner",
         "Zipper.Core",
-        "Zipper.Pool",
-        "Zipper.Resources",
-        "Zipper.Audio",
         "Zipper.UI",
-        "Zipper.TestSupport",
-        "UniTask",
-        "VContainer"
+        "UniTask"
     ],
-    "includePlatforms": [
-        "Editor"
-    ],
+    "includePlatforms": [],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
     "overrideReferences": true,
     "precompiledReferences": [
-        "nunit.framework.dll",
         "R3.dll",
         "Microsoft.Bcl.TimeProvider.dll",
         "Microsoft.Bcl.AsyncInterfaces.dll"

@@ -7,6 +7,13 @@ namespace Zipper.Tests.Fakes
     /// <summary>
     /// 测试用面板 View：把生命周期钩子的调用次数、以及"订阅回调被命中几次"记录在公开字段上，
     /// 让测试能直接断言框架的钩子顺序与解绑协议（而不是靠观察 UI）。
+    ///
+    /// <para><b>为什么它在 Zipper.TestSupport（非 Editor 程序集）</b>：
+    /// 它是 MonoBehaviour，测试需要把它挂到 GameObject 上当"对象池母本"，
+    /// 而 Editor-only 程序集里的脚本 <c>AddComponent</c> 会失败
+    /// （Unity 报 "Can't add script behaviour ... because it is an editor script"）✗
+    /// 所以测试用的运行时组件必须编译在非 Editor 程序集里，再用
+    /// <c>defineConstraints: UNITY_INCLUDE_TESTS</c> 保证它不进正式包 ✓</para>
     /// </summary>
     public sealed class TestPanel : ZPanel<TestPanelViewModel>
     {

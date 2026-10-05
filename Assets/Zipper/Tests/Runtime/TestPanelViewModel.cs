@@ -7,6 +7,10 @@ namespace Zipper.Tests.Fakes
     /// <summary>
     /// 测试用 ViewModel：纯 C#（无 UnityEngine 类型 ✓ 对应设计稿 §11-9），
     /// 并记录所有实例，供"复用不串台 / 订阅不叠加"的断言使用。
+    ///
+    /// <para><b>为什么它在 Zipper.TestSupport（非 Editor 程序集）</b>：
+    /// 它被 <see cref="TestPanel"/> 用作泛型参数，而 TestPanel 是 MonoBehaviour、
+    /// 必须能被 <c>AddComponent</c> —— Editor-only 程序集里的脚本无法挂到场景对象上 ✗</para>
     /// </summary>
     public sealed class TestPanelViewModel : ZPanelViewModel
     {
