@@ -21,16 +21,19 @@ namespace Zipper.Tests.Fakes
 
         public int DisposeCount;
 
+        DisposableBag _bag;
+
         public TestPanelViewModel()
         {
             All.Add(this);
-            Value.AddTo(ref _bag);        // ★ 用基类的袋子（子类不要再自己声明一个 ✗）
+            Value.AddTo(ref _bag);        // 自己的订阅进自己的袋子
         }
 
         public override void Dispose()
         {
             DisposeCount++;
-            base.Dispose();               // ★ 基类统一释放 _bag
+            _bag.Dispose();
+            base.Dispose();
         }
 
         /// <summary>测试辅助：推一个新值（用于验证"旧 VM 推值到不了新 View"）。</summary>
