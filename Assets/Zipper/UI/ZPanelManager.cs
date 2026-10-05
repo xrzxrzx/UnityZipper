@@ -21,6 +21,7 @@ namespace Zipper.UI
         IZLogger _logger;
         IZObjectPoolManager _poolManager;
         IZResourceManager _resourceManager;
+        IZUISfx _sfx;
         IObjectResolver _resolver;
 
         long _sequence;
@@ -28,12 +29,13 @@ namespace Zipper.UI
 
         ZPanelOpenOptions DefaultOptions = new ZPanelOpenOptions();
 
-        public ZPanelManager(ZPanelRoot root, IZLogger logger, IZObjectPoolManager poolManager, IZResourceManager resourceManager, IObjectResolver resolver)
+        public ZPanelManager(ZPanelRoot root, IZLogger logger, IZObjectPoolManager poolManager, IZResourceManager resourceManager, IZUISfx sfx, IObjectResolver resolver)
 
         {
             _root = root;
             _logger = logger;
             _poolManager = poolManager;
+            _sfx = sfx;
             _resolver = resolver;
             _resourceManager = resourceManager;
             _registry = new PanelRegistry(logger);
@@ -77,6 +79,8 @@ namespace Zipper.UI
                     vm.Dispose();
                 throw new InvalidOperationException($"取面板实例失败：{reg.ViewType.Name}");
             }
+
+            view.SetSfx(_sfx);//注入音效接口
 
             try
             {
@@ -182,11 +186,6 @@ namespace Zipper.UI
             e.View.transform.SetAsLastSibling();
         }
 
-        private bool Remove(PanelStackEntry e)
-        {
-            return _stack.Remove(e);
-        }
-
         private ZPanel GetPanelItem(Register.Registration reg)
         {
             var panel = reg.GetItem(_poolManager);
@@ -238,6 +237,7 @@ namespace Zipper.UI
             if (!_stack.Remove(entry))
                 return;
 
+            entry.View.SetSfx(null);
             entry.View.Close();
             entry.View.Unbind();
 
@@ -280,7 +280,16 @@ namespace Zipper.UI
 
         public ZPanelsState GetState()
         {
-            return new ZPanelsState();
+            var layerCounts = new int[5];
+            var panels = new List<ZPanelState>(_stack.Count);
+
+            foreach (var e in _stack)
+            {
+                layerCounts[(int)e.Layer]++;
+                panels.Add(new ZPanelState(e.ViewModel.GetType(), e.Layer, e.Handle.IsOpen));
+            }
+
+            return new ZPanelsState(_stack.Count, layerCounts, panels);
         }
     }
 }

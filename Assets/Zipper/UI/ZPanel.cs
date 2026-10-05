@@ -9,10 +9,13 @@ namespace Zipper.UI
         internal System.Action CloseRequester { get; set; }
 
         protected DisposableBag _bag;
+        protected IZUISfx _sfx;
 
         public IZObjectPoolItem.ReturnToPoolDelegate ReturnToPool { get; set; }
 
         protected ZPanelViewModel ViewModel { get; private set; }
+
+        internal void SetSfx(IZUISfx sfx) => _sfx = sfx;
 
         public void OnInitialize()
         {
