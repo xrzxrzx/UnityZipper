@@ -1,5 +1,6 @@
 using System;
 using NUnit.Framework;
+using Zipper.Tests.Fakes;
 using Zipper.UI;
 using Zipper.UI.Contract;
 
