@@ -42,7 +42,7 @@ namespace Zipper.Tests
             TestPanelViewModel.All[TestPanelViewModel.All.Count - 1].Push(42);
 
             Assert.AreEqual(1, view.ApplyCallCount,
-                "订阅残留：回调次数 > 1 说明旧的 R3 订阅没在 Unbind 里退掉");
+                "应为 1：等于 0 说明 Bind 时订阅没挂上（R3 的 DisposableBag 一旦被 Dispose 就无法再 Add）；大于 1 说明旧订阅没在 Unbind 里退掉");
             Assert.AreEqual(42, view.LastAppliedValue);
 
             h51.Close();
@@ -75,7 +75,9 @@ namespace Zipper.Tests
 
             oldVm.Push(999);
             Assert.AreEqual(0, view.ApplyCallCount, "旧 VM 推值竟到了新 View → 串台");
-            Assert.AreEqual(-1, view.LastAppliedValue, "View 不该被旧 VM 写过");
+            // ⚠️ 不能断言 LastAppliedValue == -1：R3 的 ReactiveProperty.Subscribe 会【立即推送当前值】，
+            //    所以 Bind 之后它已经是 Value 的初始值 0。这里要断言的是"没被旧 VM 写成 999"。
+            Assert.AreNotEqual(999, view.LastAppliedValue, "View 被旧 VM 写过了（串台）");
 
             newVm.Push(7);
             Assert.AreEqual(1, view.ApplyCallCount, "当前 VM 推值应恰好命中一次");
