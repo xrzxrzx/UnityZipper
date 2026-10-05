@@ -138,7 +138,9 @@ namespace Zipper.Core.Logging.Sink
             }
 
             bool wasEmpty = _queue.IsEmpty;
-            _queue.Enqueue(LogFormatter.Format(entry));
+            // 条目之间必须自带换行：LogFormatter 的返回值不含 "\n"，
+            // 而 Commit 用的是 writer.Write（不是 WriteLine）→ 不补就会全粘成一行 ✗
+            _queue.Enqueue(LogFormatter.Format(entry) + Environment.NewLine);
             if (wasEmpty)
                 _signal.Set();
 
