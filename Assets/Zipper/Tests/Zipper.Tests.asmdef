@@ -8,6 +8,7 @@
         "Zipper.Pool",
         "Zipper.Resources",
         "Zipper.Audio",
+        "Zipper.UI",
         "UniTask",
         "VContainer"
     ],
@@ -18,7 +19,8 @@
     "allowUnsafeCode": false,
     "overrideReferences": true,
     "precompiledReferences": [
-        "nunit.framework.dll"
+        "nunit.framework.dll",
+        "R3.dll"
     ],
     "autoReferenced": false,
     "defineConstraints": [

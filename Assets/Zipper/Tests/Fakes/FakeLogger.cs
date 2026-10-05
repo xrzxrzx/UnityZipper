@@ -7,7 +7,7 @@ namespace Zipper.Tests.Fakes
     /// 假日志器：只记录、不落盘。用于断言"失败路径是否按约定记了日志"。
     /// 注意：签名必须与 <see cref="IZLogger"/> 完全一致（含 CallerMemberName 等可选参数）。
     /// </summary>
-    internal sealed class FakeLogger : IZLogger
+    public sealed class FakeLogger : IZLogger
     {
         public readonly List<string> Errors = new List<string>();
         public readonly List<string> Warnings = new List<string>();
