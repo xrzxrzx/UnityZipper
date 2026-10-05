@@ -40,6 +40,7 @@ namespace Zipper.UI
         internal void Bind(ZPanelViewModel vm)
         {
             _bag.Clear();
+            _bag = default;
             ViewModel = vm;
             OnBind(vm);
         }
