@@ -58,7 +58,7 @@ namespace Zipper.Tests
             //   那 oldVm.Push(...) 会先抛 ObjectDisposedException（R3 的 ThrowIfDisposed）
             //   → 测到的是"VM 已释放所以推不了"，而不是"订阅已退掉" ✗ 判据用错了。
             //   常驻 VM 关闭后依然活着 → 此时推值若仍能到 View，才是真的串台 ✓
-            RebuildManagerWithEmptyContainer();     // 基类 [SetUp] 已用默认值注册过，重复注册会被拒绝
+            ResetManagerFresh();     // 基类 [SetUp] 已用默认值注册过，重复注册会被拒绝 → 换一个干净管理器
             Manager.Register<TestPanelViewModel, TestPanel>("UI/TestPanel", ownsViewModel: false);
             MakePoolReady();
 
@@ -138,7 +138,7 @@ namespace Zipper.Tests
         public void PersistentViewModel_IsNotDisposedByFramework()
         {
             // ★ 与上一条同理：基类 [SetUp] 已用默认值（true）注册过 → 必须先换成空注册表再登记
-            RebuildManagerWithEmptyContainer();
+            ResetManagerFresh();     // 同上：需要"只有本用例注册过"的空注册表
             Manager.Register<TestPanelViewModel, TestPanel>("UI/TestPanel", ownsViewModel: false);
             MakePoolReady();
 

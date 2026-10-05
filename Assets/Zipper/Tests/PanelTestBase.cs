@@ -33,6 +33,9 @@ namespace Zipper.Tests
 
         readonly List<GameObject> _spawned = new List<GameObject>();
 
+        /// <summary>池母本。★ 它也挂着 TestPanel 组件（池要求母本带该组件），所以会被 FindPanels 找到 → 必须排除。</summary>
+        GameObject _prefabGo;
+
         [SetUp]
         public void SetUp()
         {
@@ -98,9 +101,9 @@ namespace Zipper.Tests
         /// <summary>让注册表以为"池已建"，从而跳过需要真 Addressable 母本的加载步骤（见类注释）。</summary>
         protected void MakePoolReady()
         {
-            var prefabGo = Spawn("TestPanelPrefab");
-            prefabGo.AddComponent<TestPanel>();
-            Pools.CreatePool(new ZPoolOptions<TestPanel> { Prefab = prefabGo });
+            _prefabGo = Spawn("TestPanelPrefab");
+            _prefabGo.AddComponent<TestPanel>();
+            Pools.CreatePool(new ZPoolOptions<TestPanel> { Prefab = _prefabGo });
 
             var registry = (PanelRegistry)typeof(ZPanelManager)
                 .GetField("_registry", BindingFlags.NonPublic | BindingFlags.Instance)
@@ -117,10 +120,33 @@ namespace Zipper.Tests
             Manager = new ZPanelManager(Root, Log, Pools, Resources, Sfx, Resolver);
         }
 
+        /// <summary>
+        /// 重建为"**空注册表 + 已注册 VM**"的干净管理器。
+        /// 用途：需要"只有本用例注册过面板"的场景 —— 基类 [SetUp] 已用默认值注册过，
+        /// 而 registry 拒绝重复注册（记 Warning），所以必须先换一个空注册表。
+        /// </summary>
+        protected void ResetManagerFresh()
+        {
+            var builder = new ContainerBuilder();
+            builder.Register<TestPanelViewModel>(Lifetime.Transient);   // ★ 容器必须有 VM，否则 Resolve 抛
+            Resolver = builder.Build();
+            Manager = new ZPanelManager(Root, Log, Pools, Resources, Sfx, Resolver);   // 内部是新的空 PanelRegistry
+        }
+
         // ── 查询辅助 ──
 
-        /// <summary>当前场景里所有 TestPanel 实例（含归池后 inactive 的）。</summary>
-        protected static TestPanel[] FindPanels()
-            => Object.FindObjectsByType<TestPanel>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+        /// <summary>
+        /// 当前场景里的面板**实例**（含归池后 inactive 的）。
+        /// ★ 必须排除池母本：母本也挂着 TestPanel 组件 ✗ 不排除会让所有"取第一个实例"的断言全部错位。
+        /// </summary>
+        protected TestPanel[] FindPanels()
+        {
+            var all = Object.FindObjectsByType<TestPanel>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            var result = new List<TestPanel>();
+            foreach (var p in all)
+                if (p != null && p.gameObject != _prefabGo)
+                    result.Add(p);
+            return result.ToArray();
+        }
     }
 }

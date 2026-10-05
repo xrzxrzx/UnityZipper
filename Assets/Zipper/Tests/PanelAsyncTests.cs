@@ -1,5 +1,6 @@
 using System;
 using NUnit.Framework;
+using UnityEngine.TestTools;
 using Zipper.Tests.Fakes;
 using Zipper.UI;
 
@@ -100,15 +101,27 @@ namespace Zipper.Tests
         [Test]
         public void Dispose_ClosesEverythingAndReleasesPools()
         {
-            MakePoolReady();
-            var h = Manager.OpenAsync<TestPanelViewModel>().GetAwaiter().GetResult();
+            // ⚠️ EditMode 的固有限制：对象池销毁实例时用 Object.Destroy，
+            //    而 EditMode 下只允许 DestroyImmediate → Unity 会打一条
+            //    [Error] "Destroy may not be called from edit mode!"
+            //    这是环境限制（运行时用 Destroy 是正确的，生产代码无需改）→ 本用例内忽略该日志。
+            LogAssert.ignoreFailingMessages = true;
+            try
+            {
+                MakePoolReady();
+                var h = Manager.OpenAsync<TestPanelViewModel>().GetAwaiter().GetResult();
 
-            Assert.AreEqual(1, Pools.GetPoolsState().AllPoolsCount);
+                Assert.AreEqual(1, Pools.GetPoolsState().AllPoolsCount);
 
-            Manager.Dispose();
+                Manager.Dispose();
 
-            Assert.IsFalse(h.IsOpen, "Dispose 应关闭在栈面板");
-            Assert.AreEqual(0, Pools.GetPoolsState().AllPoolsCount, "Dispose 应拆掉池");
+                Assert.IsFalse(h.IsOpen, "Dispose 应关闭在栈面板");
+                Assert.AreEqual(0, Pools.GetPoolsState().AllPoolsCount, "Dispose 应拆掉池");
+            }
+            finally
+            {
+                LogAssert.ignoreFailingMessages = false;
+            }
         }
 
         /// <summary>造一个"注册表为空"的管理器（用于测未注册路径）。</summary>
