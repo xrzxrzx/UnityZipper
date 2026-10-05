@@ -23,13 +23,18 @@ namespace Zipper.UI
 
         public UniTask InitializeAsync(CancellationToken ct)
         {
-            // 层级根由组装层保证已就绪：
-            //   配了场景实例 → 用它；没配或配成了 prefab 资产 → 组装层已自动创建 ✓
-            // 这里只做一次体检：5 层都必须有 Transform
+            if (_root == null)
+            {
+                _logger.Error("未配置 ZPanelRoot");
+                return UniTask.CompletedTask;
+            }
+
             for (var layer = ZPanelLayer.Background; layer <= ZPanelLayer.Loading; layer++)
             {
                 if (_root.GetLayer(layer) == null)
-                    _logger.Error($"ZPanelRoot 的 {layer} 层未绑定 Transform（实例被破坏，或运行时创建失败）");
+                {
+                    _logger.Error($"ZPanelRoot 的 {layer} 层未绑定 Transform");
+                }
             }
 
             return UniTask.CompletedTask;
