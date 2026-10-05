@@ -53,11 +53,20 @@ namespace Zipper.Tests
         [Test]
         public void Unbind_OldViewModelPush_DoesNotReachView()
         {
+            // ★ 必须用【常驻 VM】(ownsViewModel: false)：
+            //   若用默认的 Transient，框架会在 Close 时把 VM Dispose 掉 ✗
+            //   那 oldVm.Push(...) 会先抛 ObjectDisposedException（R3 的 ThrowIfDisposed）
+            //   → 测到的是"VM 已释放所以推不了"，而不是"订阅已退掉" ✗ 判据用错了。
+            //   常驻 VM 关闭后依然活着 → 此时推值若仍能到 View，才是真的串台 ✓
+            RebuildManagerWithEmptyContainer();     // 基类 [SetUp] 已用默认值注册过，重复注册会被拒绝
+            Manager.Register<TestPanelViewModel, TestPanel>("UI/TestPanel", ownsViewModel: false);
             MakePoolReady();
 
             var h1 = Manager.OpenAsync<TestPanelViewModel>().GetAwaiter().GetResult();
             var oldVm = TestPanelViewModel.All[TestPanelViewModel.All.Count - 1];
             h1.Close();
+
+            Assert.AreEqual(0, oldVm.DisposeCount, "常驻 VM 不该被释放（否则本用例的前提不成立）");
 
             var h2 = Manager.OpenAsync<TestPanelViewModel>().GetAwaiter().GetResult();
             var newVm = TestPanelViewModel.All[TestPanelViewModel.All.Count - 1];
@@ -66,6 +75,7 @@ namespace Zipper.Tests
 
             oldVm.Push(999);
             Assert.AreEqual(0, view.ApplyCallCount, "旧 VM 推值竟到了新 View → 串台");
+            Assert.AreEqual(-1, view.LastAppliedValue, "View 不该被旧 VM 写过");
 
             newVm.Push(7);
             Assert.AreEqual(1, view.ApplyCallCount, "当前 VM 推值应恰好命中一次");
@@ -127,6 +137,8 @@ namespace Zipper.Tests
         [Test]
         public void PersistentViewModel_IsNotDisposedByFramework()
         {
+            // ★ 与上一条同理：基类 [SetUp] 已用默认值（true）注册过 → 必须先换成空注册表再登记
+            RebuildManagerWithEmptyContainer();
             Manager.Register<TestPanelViewModel, TestPanel>("UI/TestPanel", ownsViewModel: false);
             MakePoolReady();
 
