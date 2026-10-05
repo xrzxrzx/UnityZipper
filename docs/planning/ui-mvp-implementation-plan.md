@@ -41,38 +41,36 @@
 
 > 除下列文件外**不碰任何文件**；实施中发现必须多碰 → 停下重新获批（`zipper-dev` §二.1）。
 
-| 批 | 文件 | 新建/修改 |
+| 批 | 文件 | 状态 |
 |---|---|---|
-| B1 | `Assets/Zipper/UI/Zipper.UI.asmdef` | 修改（**补 VContainer 引用**：`GUID:b0214a6008ed146ff8f122a6a9c2f6cc`）✅ 已完成 |
-| B1 | `Assets/Zipper/UI/IZPanelManager.cs` | 修改（4 个成员）✅ 已完成 |
-| B1 | `Assets/Zipper/UI/ZPanelViewModel.cs` | 新建（骨架）✅ 已完成 |
-| B1 | `Assets/Zipper/UI/ZPanelHandle.cs` | 新建 ✅ 已完成 |
-| B1 | `Assets/Zipper/UI/ZPanelOpenOptions.cs` | 新建（**待填 4 项** ⚠️） |
-| B1 | `Assets/Zipper/UI/ZPanelsState.cs` | 新建（骨架；内容 T15）✅ 已完成 |
-| B1 | `Assets/Zipper/UI/Contract/ZPanelLayer.cs` | 新建 ✅ 已完成 |
-| B1 | `Assets/Zipper/UI/Contract/ZPanelRoot.cs` | 新建 ⚠️ **必须 `: MonoBehaviour`**（见 §3 T3） |
-| B1 | `Assets/Zipper/UI/Contract/PanelStackEntry.cs` | 新建 ⚠️ 补构造函数 |
-| B1 | `Assets/Zipper/UI/Register/PanelRegistry.cs` | 新建 ✅ 已完成 |
-| B1 | `Assets/Zipper/UI/Register/Registration.cs` | 新建 ✅ 已完成 |
-| B1 | `Assets/Zipper/UI/ZPanel.cs` | 修改（`MonoBehaviour + IZObjectPoolItem` 已到位 ✅；**成员体仍为 `throw` 占位** ⚠️ 见 T5） |
-| B1 | `Assets/Zipper/UI/ZPanelManager.cs` | 新建 ⬜ **下一步**（注册表 + 栈 + 开关 + 池化 + 母本） |
-| B1 | `Assets/Zipper/UI/ZPanelBootstrapper.cs` | 新建 ⬜ |
-| B1 | `Assets/Zipper/DI/GameLifetimeScope.cs` | 修改 ⬜（注册 `IZPanelManager` + `ZPanelBootstrapper` + `[SerializeField] ZPanelRoot`） |
-| B1 | `Assets/Zipper/DI/Prefabs/GameLifetimeScope.prefab` | 新建 ✅（**框架自带资产 → 入库**，见 §2.1 第 5 条） |
-| B1 | `Assets/Zipper/Tests/Zipper.Tests.asmdef` | 修改 ⬜（加 `Zipper.UI` 引用） |
-| B1 | `Assets/Zipper/Tests/PanelStackTests.cs` | 新建 ⬜ |
-| B2 | `Assets/Zipper/UI/ZPanelViewModel.cs` | 修改（补内容 + `CloseRequested`） |
-| B2 | `Assets/Zipper/UI/ZPanel.cs` | 修改（补 `DisposableBag` + `Bind/Unbind` **实现**） |
-| B2 | `Assets/Zipper/UI/ZPanelManager.cs` | 修改（VM 构造注入 + 关闭时 Dispose / 常驻不释放） |
-| B2 | `Assets/Zipper/Tests/PanelBindingTests.cs` | 新建（**50 次开关 + 不串台**） |
-| B2 | `Assets/Zipper/Tests/Fakes/FakePanel*.cs` | 新建（测试用 View/VM） |
-| B3 | `Assets/Zipper/UI/ZPanelManager.cs` | 修改（失败抛、`CloseAll(destroy)`、`GetState`） |
-| B3 | `Assets/Zipper/UI/IZUISfx.cs` + `ZUiSfxNoop.cs` | 新建（D8 方案 ② 的 UI 侧抽象 + 空实现） |
-| B3 | `Assets/Zipper/UI/ZPanelsState.cs` | 修改（补内容） |
-| B3 | `Assets/Zipper/DI/GameLifetimeScope.cs` | 修改（注册 `IZUISfx` 适配 → 桥到 `IZAudioManager`） |
-| B3 | `Assets/Zipper/Tests/PanelAsyncTests.cs` | 新建 |
+| B1 | `Assets/Zipper/UI/Zipper.UI.asmdef` | ✅（补 VContainer 引用 `GUID:b0214a6008ed146ff8f122a6a9c2f6cc`） |
+| B1 | `Assets/Zipper/UI/IZPanelManager.cs` | ✅（5 个成员：`OpenAsync`/`Register`/`TryHandleBack`/`CloseAll`/`GetState`） |
+| B1 | `Assets/Zipper/UI/ZPanelViewModel.cs` | ✅ |
+| B1 | `Assets/Zipper/UI/ZPanelHandle.cs` | ✅ |
+| B1 | `Assets/Zipper/UI/ZPanelOpenOptions.cs` | ✅（4 项已填 + 默认值） |
+| B1 | `Assets/Zipper/UI/ZPanelsState.cs` | ✅ |
+| B1 | `Assets/Zipper/UI/ZPanelState.cs` | ✅（**实施中新增**：单个面板摘要） |
+| B1 | `Assets/Zipper/UI/Contract/ZPanelLayer.cs` | ✅ |
+| B1 | `Assets/Zipper/UI/ZPanelRoot.cs` | ✅（**实际落在根目录**，非 `Contract/`；命名空间 `Zipper.UI`） |
+| B1 | `Assets/Zipper/UI/Contract/PanelStackEntry.cs` | ✅（`internal`；含构造函数与 `OwnsViewModel`） |
+| B1 | `Assets/Zipper/UI/Register/PanelRegistry.cs` | ✅ |
+| B1 | `Assets/Zipper/UI/Register/Registration.cs` | ✅（含 `OwnsViewModel`） |
+| B1 | `Assets/Zipper/UI/ZPanel.cs` | ✅（`MonoBehaviour + IZObjectPoolItem`；钩子映射 + `_bag` + `CloseRequester` + `_sfx`） |
+| B1 | `Assets/Zipper/UI/ZPanelManager.cs` | ✅（295 行：注册表转发 + 栈 + 开关 + 池化 + 母本 + 失败语义 + `CloseAll` + `GetState`） |
+| B1 | `Assets/Zipper/UI/ZPanelBootstrapper.cs` | ✅（`Phase = ZBootPhase.UI`） |
+| B1 | `Assets/Zipper/DI/GameLifetimeScope.cs` | ✅（`ZPanelRoot` + `IZPanelManager` + `ZPanelBootstrapper` + `IZUISfx`） |
+| B1 | `Assets/Zipper/DI/Prefabs/GameLifetimeScope.prefab` | ✅ |
+| B1 | `Assets/Zipper/DI/Prefabs/ZPanelRoot.prefab` | ✅（**实施中新增**：层级父节点预制体） |
+| B2 | `Assets/Zipper/UI/ZPanelViewModel.cs` | ✅（`CloseRequested` + `Dispose`） |
+| B2 | `Assets/Zipper/UI/ZPanel.cs` | ✅（`DisposableBag` + `Bind/Unbind` 实现） |
+| B2 | `Assets/Zipper/UI/ZPanelManager.cs` | ✅（VM 构造 + 所有权决策） |
+| B3 | `Assets/Zipper/UI/ZPanelManager.cs` | ✅（失败语义 / `CloseAll(destroy)` / `GetState`） |
+| B3 | `Assets/Zipper/UI/IZUISfx.cs` | ✅（**同一文件内含** `IZUISfx` + `ZUiSfxNoop`） |
+| B3 | `Assets/Zipper/DI/ZUiSfxAdapter.cs` | ✅（**实施中新增**：组装层桥到 `IZAudioManager`） |
+| B3 | `Assets/Zipper/UI/ZPanelsState.cs` | ✅（补内容） |
+| — | `Assets/Zipper/Tests/Zipper.Tests.asmdef` + `PanelStackTests.cs` + `PanelBindingTests.cs` + `PanelAsyncTests.cs` + `Fakes/FakePanel*.cs` | ⬜ **按使用者要求延后**（"全搞完了再做"）→ 属**已声明的延后**，须在验收报告的"未覆盖项"里逐条登记 |
 
-**不动**：`Zipper.Core` / `Zipper.Pool` / `Zipper.Resources` / `Zipper.Audio`（本阶段无需改它们）✓
+**不动**（已核对：实际 diff 里一个都没碰 ✓）：`Zipper.Core` / `Zipper.Pool` / `Zipper.Resources` / `Zipper.Audio` ✓
 
 ### 2.1 实施中的调整（v0.3 记录）
 
@@ -83,6 +81,7 @@
 | 3 | **`CancellationToken` v1 不加**（使用者决定：暂时不写这么完善，之后再加） | 可选参数**源兼容** → 之后补**不影响任何调用方** ✓；**代价**：设计稿 **§11-6（异步取消回滚）推后到 v2/按需** ✗ 需在 T17 回写设计稿 |
 | 4 | **池 `MaxSize = 0`（不限）**（使用者决定） | "就几个页面，能创多少个" ✓ 与音频池（上限 32）的取舍相反，属**有意**（那边是"一次爆炸 200 个音效"的场景） |
 | 5 | **框架自带场景资产入库** | `Assets/Zipper/DI/Prefabs/GameLifetimeScope.prefab`（"拖出来就能用，不用自己手动创建"）→ 已同步 `docs/standards/git-workflow.md` **§1.1 豁免**（框架的一部分 → 入库；业务资产仍不入库） |
+| 6 | **框架给 View 递东西的两个通道**：`CloseRequester` → `protected RequestClose()`、`SetSfx()` → `protected _sfx` | 实施中发现的设计缺口：`ZPanel.Close()`/`Open()` 是 `internal` ✗ 而**业务侧 View 在另一个程序集**（Assembly-CSharp）✗ → View **没有任何合法路径**请求关闭 ✗；而"View 不碰容器"（设计稿 §3/§7.3）是硬纪律 ✗ → 解法：**框架在 `OpenAsync` 里注入、在 `CloseEntry` 里清空**（`internal` 注入入口 + `protected` 读取字段）✓ 待办：**设计稿 §6.2 的模板需从 `Close()` 改为 `RequestClose()`**，**§8.1 需补"`_sfx` 从哪来"**（T17 回写） |
 
 ---
 
@@ -240,6 +239,7 @@ foreach ($p in @("Zipper.Core.csproj","Zipper.Pool.csproj","Zipper.Resources.csp
 
 | 版本 | 日期 | 说明 |
 |---|---|---|
-| **v0.3** | 2026-10-04 | **实施中同步（T1–T3 已成型）**：① §2 改动点清单按**实际目录结构**对齐（新增 `Contract/ZPanelLayer.cs`、`Contract/ZPanelRoot.cs`、`Contract/PanelStackEntry.cs`、`Register/PanelRegistry.cs`、`Register/Registration.cs`、`DI/Prefabs/GameLifetimeScope.prefab`；逐个标注 ✅/⚠️/⬜ 状态）；② 新增 **§2.1 实施中的五项调整**（目录落定 / 顺序调整 `T1→T5→T2→T3→T4` / **`CancellationToken` v1 不加**（→ §11-6 推后）/ **池 `MaxSize = 0` 不限** / **框架自带场景资产入库**）；③ §3 的 B1 段按实际状态重写（含 `ZPanelRoot` 必须 `: MonoBehaviour`、`PanelStackEntry` 缺构造、`ZPanel` 的 `throw` 占位"补完前别建池"等三处⚠️）；④ **`docs/standards/git-workflow.md`** 新增 **§1.1 豁免**（框架自带的场景侧资产必须入库；业务资产仍不入库） |
+| **v0.4** | 2026-10-05 | **实施完成回填（T1–T16 全部落地）**：① §2 改动点清单**逐条对齐实际 diff**——基线 `44f93ff..9c06286`，**41 文件 / +1285 −7**；记录三处实际与计划的差异（`ZPanelRoot.cs` 落在根目录、`IZUISfx.cs` 内含 `ZUiSfxNoop`）与三处实施中新增（`ZPanelState.cs` / `ZUiSfxAdapter.cs` / `ZPanelRoot.prefab`）；**测试 4 项标注为"已声明的延后"**（使用者要求"全搞完了再做"）；② §2.1 新增**第 6 条**（框架给 View 递东西的两个通道：`CloseRequester` + `_sfx`；含"设计稿 §6.2 的 `Close()` 应改 `RequestClose()`、§8.1 需补 `_sfx` 来源"的待办）；③ 提交序列：`58562f6` → `e195650` → `7cd4b8d` → `9c06286` |
+| v0.3 | 2026-10-04 | **实施中同步（T1–T3 已成型）**：① §2 改动点清单按**实际目录结构**对齐（新增 `Contract/` + `Register/` + `DI/Prefabs/GameLifetimeScope.prefab`；逐个标注 ✅/⚠️/⬜ 状态）；② 新增 **§2.1 实施中的五项调整**（目录落定 / 顺序调整 `T1→T5→T2→T3→T4` / **`CancellationToken` v1 不加**（→ §11-6 推后）/ **池 `MaxSize = 0` 不限** / **框架自带场景资产入库**）；③ §3 的 B1 段按实际状态重写；④ **`docs/standards/git-workflow.md`** 新增 **§1.1 豁免** |
 | v0.2 | 2026-10-04 | **批准版（三项确认落定）**：① **R3 命名** —— 按设计稿 §9 的**说明**走（内部机制不加前缀），目录清单里带前缀的名字视为笔误、收尾时更正；② **T14** —— `IZUISfx` 的组装层适配放 `Zipper.DI`（确认）；③ **T6 定稿** —— `ZPanelRoot` **只走 `[SerializeField]` 显式引用、不做 `Find*` 兜底**，未配置即明确报错（附"不要用已废弃的 `FindObjectOfType`"的提醒与实测说明：本工程 2022.3.62 的 `FindFirstObjectByType`/`FindObjectsByType` 已可用）。风险表 R3/R5 同步 |
 | v0.1 | 2026-10-04 | 初稿（S3）：依据设计稿 v0.4 拆 **3 批 + 收尾**，每批 = 一次提交；给出改动点清单（= 已声明文件）、**17 条 TODO**（进度唯一真源）、每步验收命令与观察点、测试策略、6 条风险与回滚、完成判据（含"改动点清单与 diff 对得上"的核对） |
